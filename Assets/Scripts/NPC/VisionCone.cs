@@ -63,6 +63,26 @@ public class VisionCone : MonoBehaviour
     private readonly List<LineRenderer> boundaryLines =
         new List<LineRenderer>();
 
+    /*
+     * Boundary children are matched by name so that a domain reload,
+     * which wipes boundaryLines without touching the GameObjects it
+     * referred to, can re-adopt the existing ones instead of creating
+     * a fresh set every recompile.
+     */
+
+    private static readonly string[] BoundaryNames =
+    {
+        "Vision Left Boundary",
+        "Vision Right Boundary",
+        "Vision Far Boundary"
+    };
+
+    /*
+     * One material shared by all three lines, rather than one each.
+     */
+
+    private Material boundaryMaterial;
+
     private readonly HashSet<Transform> detectedTargets =
         new HashSet<Transform>();
 
@@ -128,17 +148,44 @@ public class VisionCone : MonoBehaviour
                 boundaryWidth
             );
 
+        /*
+         * Rebuilding here directly is not safe. Initialize destroys the
+         * old mesh and any surplus boundary objects, and Unity forbids
+         * DestroyImmediate while OnValidate is on the stack. Deferring
+         * by one editor tick puts that work somewhere it is legal.
+         */
+
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.delayCall += DeferredInitialize;
+#else
+        Initialize();
+#endif
+    }
+
+#if UNITY_EDITOR
+    private void DeferredInitialize()
+    {
+        UnityEditor.EditorApplication.delayCall -= DeferredInitialize;
+
+        /*
+         * The component may have been deleted between the validate and
+         * this callback. The fake-null comparison is the point here.
+         */
+
+        if (this == null)
+            return;
+
         Initialize();
     }
+#endif
 
     private void OnDestroy()
     {
         CleanupMesh();
 
-        if (Application.isPlaying)
-        {
-            CleanupBoundaryObjects();
-        }
+        CleanupBoundaryObjects();
+
+        CleanupBoundaryMaterial();
     }
 
 
@@ -186,6 +233,14 @@ public class VisionCone : MonoBehaviour
 
         coneMesh.name =
             "Vision Cone";
+
+        /*
+         * Generated every rebuild, so it must never be written into
+         * the scene file.
+         */
+
+        coneMesh.hideFlags =
+            HideFlags.DontSave;
 
         List<Vector3> vertices =
             new List<Vector3>();
@@ -465,6 +520,12 @@ public class VisionCone : MonoBehaviour
                 material =
                     new Material(shader);
 
+                material.name =
+                    "Vision Cone (generated)";
+
+                material.hideFlags =
+                    HideFlags.DontSave;
+
                 meshRenderer.sharedMaterial =
                     material;
             }
@@ -537,42 +598,103 @@ public class VisionCone : MonoBehaviour
 
     private void SetupBoundaryLines()
     {
+        ReconcileBoundaryLines();
+
         if (!showBoundary)
         {
             SetBoundaryVisible(false);
             return;
         }
 
-        while (boundaryLines.Count < 3)
-        {
-            CreateBoundaryLine(
-                boundaryLines.Count
-            );
-        }
-
         UpdateBoundaryLines();
     }
 
 
-    private void CreateBoundaryLine(
+    /// <summary>
+    /// Brings the three boundary children into line with what actually
+    /// exists in the scene.
+    ///
+    /// The old version simply created lines until the list held three.
+    /// Because boundaryLines is not serialized, every domain reload
+    /// emptied it while leaving the previous GameObjects parented under
+    /// this transform, so each recompile added three more forever. The
+    /// fix is to adopt what is already there and destroy the surplus.
+    /// </summary>
+    private void ReconcileBoundaryLines()
+    {
+        LineRenderer[] slots =
+            new LineRenderer[BoundaryNames.Length];
+
+        /*
+         * Backwards, because surplus children get destroyed as we go.
+         */
+
+        for (int i = transform.childCount - 1; i >= 0; i--)
+        {
+            Transform child = transform.GetChild(i);
+
+            int index =
+                System.Array.IndexOf(BoundaryNames, child.name);
+
+            if (index < 0)
+                continue;
+
+            LineRenderer line =
+                child.GetComponent<LineRenderer>();
+
+            if (line == null)
+                continue;
+
+            if (slots[index] == null)
+            {
+                slots[index] = line;
+
+                MarkAsGenerated(child.gameObject);
+            }
+            else
+            {
+                DestroyGenerated(child.gameObject);
+            }
+        }
+
+        boundaryLines.Clear();
+
+        for (int i = 0; i < slots.Length; i++)
+        {
+            if (slots[i] == null)
+            {
+                slots[i] = CreateBoundaryLine(i);
+            }
+
+            ConfigureBoundaryLine(slots[i]);
+
+            boundaryLines.Add(slots[i]);
+        }
+    }
+
+
+    private LineRenderer CreateBoundaryLine(
         int index)
     {
         GameObject obj =
-            new GameObject(
-                index == 0
-                    ? "Vision Left Boundary"
-                    : index == 1
-                        ? "Vision Right Boundary"
-                        : "Vision Far Boundary"
-            );
+            new GameObject(BoundaryNames[index]);
 
         obj.transform.SetParent(
             transform,
             false
         );
 
-        LineRenderer line =
-            obj.AddComponent<LineRenderer>();
+        MarkAsGenerated(obj);
+
+        return obj.AddComponent<LineRenderer>();
+    }
+
+
+    private void ConfigureBoundaryLine(
+        LineRenderer line)
+    {
+        if (line == null)
+            return;
 
         line.useWorldSpace =
             false;
@@ -592,17 +714,29 @@ public class VisionCone : MonoBehaviour
         line.endColor =
             boundaryColor;
 
-        line.material =
-            CreateBoundaryMaterial();
+        /*
+         * sharedMaterial, never material. Reading .material in the
+         * editor instantiates a private copy on the spot, which was a
+         * second source of the material pile-up in the scene file.
+         */
 
-        boundaryLines.Add(
-            line
-        );
+        line.sharedMaterial =
+            GetBoundaryMaterial();
     }
 
 
-    private Material CreateBoundaryMaterial()
+    /// <summary>
+    /// One material for every boundary line on this cone, created once.
+    /// </summary>
+    private Material GetBoundaryMaterial()
     {
+        if (boundaryMaterial != null)
+        {
+            boundaryMaterial.color = boundaryColor;
+
+            return boundaryMaterial;
+        }
+
         Shader shader =
             Shader.Find(
                 "Universal Render Pipeline/Unlit"
@@ -616,13 +750,49 @@ public class VisionCone : MonoBehaviour
                 );
         }
 
-        Material material =
+        if (shader == null)
+            return null;
+
+        boundaryMaterial =
             new Material(shader);
 
-        material.color =
+        boundaryMaterial.name =
+            "Vision Boundary (generated)";
+
+        /*
+         * DontSave keeps generated throwaways out of the scene file
+         * entirely, so nothing can accumulate there again.
+         */
+
+        boundaryMaterial.hideFlags =
+            HideFlags.DontSave;
+
+        boundaryMaterial.color =
             boundaryColor;
 
-        return material;
+        return boundaryMaterial;
+    }
+
+
+    private static void MarkAsGenerated(GameObject obj)
+    {
+        obj.hideFlags = HideFlags.DontSave;
+    }
+
+
+    private static void DestroyGenerated(Object target)
+    {
+        if (target == null)
+            return;
+
+        if (Application.isPlaying)
+        {
+            Destroy(target);
+        }
+        else
+        {
+            DestroyImmediate(target);
+        }
     }
 
 
@@ -1019,13 +1189,13 @@ public class VisionCone : MonoBehaviour
         if (coneMesh == null)
             return;
 
+        /*
+         * Previously this only destroyed in play mode and simply
+         * dropped the reference in the editor, orphaning a Mesh on
+         * every rebuild.
+         */
 
-        if (Application.isPlaying)
-        {
-            Destroy(
-                coneMesh
-            );
-        }
+        DestroyGenerated(coneMesh);
 
         coneMesh =
             null;
@@ -1041,12 +1211,23 @@ public class VisionCone : MonoBehaviour
             if (line == null)
                 continue;
 
-            Destroy(
+            DestroyGenerated(
                 line.gameObject
             );
         }
 
         boundaryLines.Clear();
+    }
+
+
+    private void CleanupBoundaryMaterial()
+    {
+        if (boundaryMaterial == null)
+            return;
+
+        DestroyGenerated(boundaryMaterial);
+
+        boundaryMaterial = null;
     }
 
 

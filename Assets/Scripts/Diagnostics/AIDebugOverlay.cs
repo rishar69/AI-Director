@@ -42,6 +42,12 @@ public class AIDebugOverlay : MonoBehaviour
     [SerializeField]
     private PerceptionSystem perception;
 
+    [SerializeField]
+    private XenoLocomotion locomotion;
+
+    [SerializeField]
+    private LocomotionTestDriver testDriver;
+
 
     [Header("Display")]
     [SerializeField]
@@ -98,6 +104,17 @@ public class AIDebugOverlay : MonoBehaviour
         if (perception == null)
         {
             perception = FindFirstObjectByType<PerceptionSystem>();
+        }
+
+        if (locomotion == null)
+        {
+            locomotion = FindFirstObjectByType<XenoLocomotion>();
+        }
+
+        if (testDriver == null && locomotion != null)
+        {
+            testDriver =
+                locomotion.GetComponent<LocomotionTestDriver>();
         }
 
         CheckNavMesh();
@@ -257,6 +274,8 @@ public class AIDebugOverlay : MonoBehaviour
 
         AppendPerceptionSection();
 
+        AppendLocomotionSection();
+
         AppendNoiseSection();
 
         AppendSetupSection();
@@ -325,6 +344,60 @@ public class AIDebugOverlay : MonoBehaviour
         else
         {
             Line("last known", "none");
+        }
+    }
+
+
+    // =========================================================
+    // LOCOMOTION
+    // =========================================================
+
+    private void AppendLocomotionSection()
+    {
+        if (locomotion == null)
+            return;
+
+        builder.AppendLine();
+
+        Header("LOCOMOTION");
+
+        if (!locomotion.IsOnNavMesh)
+        {
+            Warn("agent is not on the NavMesh");
+        }
+
+        Line("gait", locomotion.CurrentGait.ToString());
+
+        Line(
+            "speed",
+            locomotion.CurrentSpeed.ToString("F2") + " / " +
+            locomotion.TargetSpeed.ToString("F1") + " m/s"
+        );
+
+        if (testDriver != null)
+        {
+            Line("test mode", testDriver.DebugMode);
+        }
+
+        if (locomotion.HasDestination)
+        {
+            float remaining = locomotion.RemainingDistance;
+
+            Line(
+                "destination",
+                float.IsPositiveInfinity(remaining)
+                    ? "computing path"
+                    : remaining.ToString("F1") + "m remaining"
+            );
+
+            if (locomotion.PathFailed)
+            {
+                Warn("path incomplete - target unreachable");
+            }
+        }
+        else
+        {
+            Line("destination", "none");
         }
     }
 
