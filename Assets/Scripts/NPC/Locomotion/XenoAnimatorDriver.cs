@@ -66,10 +66,22 @@ public class XenoAnimatorDriver : MonoBehaviour
     private string idleTrigger = "Idle";
 
     [SerializeField]
+    private string walkTrigger = "Walk";
+
+    [SerializeField]
     private string runTrigger = "Run";
 
     [SerializeField]
     private string lookAroundTrigger = "LookAround";
+
+    /// <summary>
+    /// Optional. No attack clip exists yet, so when this parameter is
+    /// absent the strike falls back to the run trigger - a creature
+    /// visibly charging is a far better stand-in than one standing
+    /// still in its idle pose while the screen fades out.
+    /// </summary>
+    [SerializeField]
+    private string attackTrigger = "Attack";
 
 
     [Header("Speed Parameter")]
@@ -80,24 +92,37 @@ public class XenoAnimatorDriver : MonoBehaviour
     private float speedDamping = 0.12f;
 
 
-    [Header("Missing Walk Clip")]
+    [Header("Gait Selection")]
+    /// <summary>
+    /// Ground speed at or above which the run clip is used.
+    ///
+    /// Sits between the Walk gait (2.4) and Run gait (5.2), so prowling
+    /// and walking both play the walk clip and only a real chase plays
+    /// the run.
+    /// </summary>
+    [SerializeField, Min(0.1f)]
+    private float runSpeedThreshold = 3.5f;
+
+    [SerializeField, Min(0f)]
+    private float runSpeedHysteresis = 0.6f;
+
+
+    [Header("Clip Speed")]
     /*
-     * There is no walk animation in the project, only Idle, Look Around
-     * and Running. Playing the run clip at reduced playback speed is a
-     * passable stand-in for a walk, and is far less ugly than blending
-     * a run against an idle.
-     *
-     * Delete this once a real walk clip exists and switch mode to
-     * SpeedParameter.
+     * Playback is scaled by actual speed over the speed the clip was
+     * authored at, which is what stops the feet sliding when a gait
+     * does not match its clip - prowling at 1.2 against a walk clip
+     * built for 1.5, say.
      */
 
     [SerializeField]
     private bool scaleClipSpeedToMovement = true;
 
-    /// <summary>
-    /// The ground speed the Running clip was authored at. Playback is
-    /// scaled by actualSpeed / this.
-    /// </summary>
+    /// <summary>Ground speed the Walking clip was authored at.</summary>
+    [SerializeField, Min(0.1f)]
+    private float walkClipReferenceSpeed = 1.5f;
+
+    /// <summary>Ground speed the Running clip was authored at.</summary>
     [SerializeField, Min(0.1f)]
     private float runClipReferenceSpeed = 4.5f;
 
@@ -115,8 +140,10 @@ public class XenoAnimatorDriver : MonoBehaviour
     private enum AnimState
     {
         Idle,
-        Moving,
-        LookAround
+        Walking,
+        Running,
+        LookAround,
+        Attack
     }
 
     private XenoLocomotion locomotion;
@@ -126,6 +153,8 @@ public class XenoAnimatorDriver : MonoBehaviour
     private bool lookAroundRequested;
 
     private float lookAroundHoldUntil;
+
+    private float attackHoldUntil;
 
     private float smoothedSpeed;
 
@@ -208,6 +237,14 @@ public class XenoAnimatorDriver : MonoBehaviour
 
     private AnimState ResolveDesiredState()
     {
+        /*
+         * The strike outranks everything, including movement - it is a
+         * lunge, so the creature is moving while it happens.
+         */
+
+        if (Time.time < attackHoldUntil)
+            return AnimState.Attack;
+
         if (locomotion.IsMoving)
         {
             /*
@@ -218,7 +255,27 @@ public class XenoAnimatorDriver : MonoBehaviour
 
             lookAroundRequested = false;
 
-            return AnimState.Moving;
+            /*
+             * Chosen from actual speed rather than the gait, because
+             * the gait is intent and the animation has to match what
+             * the feet are really doing - a creature still accelerating
+             * into a run is not running yet.
+             */
+
+            /*
+             * A dead band around the threshold. Without it, speed
+             * hovering right on 3.5 flips the state every few frames
+             * and machine-guns triggers at the animator.
+             */
+
+            float threshold =
+                state == AnimState.Running
+                    ? runSpeedThreshold - runSpeedHysteresis
+                    : runSpeedThreshold;
+
+            return locomotion.CurrentSpeed >= threshold
+                ? AnimState.Running
+                : AnimState.Walking;
         }
 
         if (lookAroundRequested)
@@ -259,8 +316,30 @@ public class XenoAnimatorDriver : MonoBehaviour
 
         switch (next)
         {
-            case AnimState.Moving:
+            case AnimState.Running:
                 FireTrigger(runTrigger);
+                break;
+
+            case AnimState.Walking:
+                /*
+                 * Falls back to the run trigger when no Walk parameter
+                 * exists yet, so an animator that has not been updated
+                 * still moves instead of standing idle while sliding.
+                 */
+
+                FireTrigger(
+                    HasParameter(walkTrigger)
+                        ? walkTrigger
+                        : runTrigger
+                );
+                break;
+
+            case AnimState.Attack:
+                FireTrigger(
+                    HasParameter(attackTrigger)
+                        ? attackTrigger
+                        : runTrigger
+                );
                 break;
 
             case AnimState.LookAround:
@@ -290,9 +369,13 @@ public class XenoAnimatorDriver : MonoBehaviour
     {
         ResetTrigger(idleTrigger);
 
+        ResetTrigger(walkTrigger);
+
         ResetTrigger(runTrigger);
 
         ResetTrigger(lookAroundTrigger);
+
+        ResetTrigger(attackTrigger);
 
         if (HasParameter(trigger))
         {
@@ -357,8 +440,17 @@ public class XenoAnimatorDriver : MonoBehaviour
             return;
         }
 
-        if (!scaleClipSpeedToMovement ||
-            state != AnimState.Moving)
+        /*
+         * Attack is excluded so the strike always plays at its authored
+         * speed, whether that is a real attack clip or the run clip
+         * standing in for one.
+         */
+
+        bool locomoting =
+            state == AnimState.Walking ||
+            state == AnimState.Running;
+
+        if (!scaleClipSpeedToMovement || !locomoting)
         {
             animator.speed = 1f;
 
@@ -366,14 +458,19 @@ public class XenoAnimatorDriver : MonoBehaviour
         }
 
         /*
-         * Only safe because the whole animator is in the run state
-         * while moving - scaling Animator.speed would otherwise also
-         * slow down idle and the scan.
+         * Scaled against whichever clip is actually playing. Only safe
+         * because the animator is wholly in that locomotion state -
+         * Animator.speed would otherwise also slow the idle and scan.
          */
+
+        float reference =
+            state == AnimState.Running
+                ? runClipReferenceSpeed
+                : walkClipReferenceSpeed;
 
         animator.speed =
             Mathf.Clamp(
-                locomotion.CurrentSpeed / runClipReferenceSpeed,
+                locomotion.CurrentSpeed / reference,
                 minimumClipSpeed,
                 maximumClipSpeed
             );
@@ -398,6 +495,18 @@ public class XenoAnimatorDriver : MonoBehaviour
 
     public void CancelLookAround()
     {
+        lookAroundRequested = false;
+    }
+
+
+    /// <summary>
+    /// Plays the strike for a while. Called by AttackState as the lunge
+    /// begins.
+    /// </summary>
+    public void PlayAttack(float duration)
+    {
+        attackHoldUntil = Time.time + Mathf.Max(0.05f, duration);
+
         lookAroundRequested = false;
     }
 

@@ -180,6 +180,21 @@ public class PlayerController : MonoBehaviour
     /// </summary>
     public event System.Action<float> OnLanded;
 
+    /// <summary>
+    /// Freezes movement while leaving looking alone.
+    ///
+    /// Used by PlayerHiding. Being able to turn your head inside a
+    /// locker while unable to walk out of it is most of what makes
+    /// hiding tense rather than a pause menu.
+    /// </summary>
+    public bool MovementLocked { get; set; }
+
+    /// <summary>
+    /// Freezes looking as well. Used by the death sequence, which needs
+    /// to point the camera itself.
+    /// </summary>
+    public bool LookLocked { get; set; }
+
 
     // =========================================================
     // UNITY
@@ -219,6 +234,23 @@ public class PlayerController : MonoBehaviour
             return;
 
         UpdateLook();
+
+        if (MovementLocked)
+        {
+            /*
+             * Gravity still runs, so a locked player in a hiding spot
+             * stays on the floor rather than hovering if the spot moves
+             * or the ground changes.
+             */
+
+            horizontalVelocity = Vector3.zero;
+
+            UpdateGravityAndLanding();
+
+            ApplyMotion();
+
+            return;
+        }
 
         UpdateStance();
 
@@ -336,6 +368,9 @@ public class PlayerController : MonoBehaviour
 
     private void UpdateLook()
     {
+        if (LookLocked)
+            return;
+
         Vector2 look = ReadLook();
 
         /*

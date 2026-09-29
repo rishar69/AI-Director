@@ -75,6 +75,16 @@ public class VisionSense : Sense
 
     public float Angle => angle;
 
+    public void SetRange(float value)
+    {
+        range = Mathf.Max(0.1f, value);
+    }
+
+    public void SetAngle(float value)
+    {
+        angle = Mathf.Clamp(value, 1f, 360f);
+    }
+
 
     // =========================================================
     // UNITY
@@ -175,6 +185,18 @@ public class VisionSense : Sense
     {
         bestPoint = Vector3.zero;
 
+        /*
+         * A target inside a locker is still physically there and still
+         * inside the cone. Concealment is what makes hiding work, and
+         * it is applied here rather than by excluding the collider so
+         * that partial cover stays partial.
+         */
+
+        float concealment = Concealment.VisibilityOf(collider);
+
+        if (concealment <= 0f)
+            return 0f;
+
         GetSamplePoints(collider, samplePoints);
 
         float halfAngle = angle * 0.5f;
@@ -219,7 +241,9 @@ public class VisionSense : Sense
                     : 1f;
 
             float strength =
-                Mathf.Clamp01(distanceTerm * peripheralTerm);
+                Mathf.Clamp01(
+                    distanceTerm * peripheralTerm * concealment
+                );
 
             if (strength > best)
             {

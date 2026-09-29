@@ -53,6 +53,22 @@ public class ProximitySense : Sense
 
     public float Radius => radius;
 
+    public bool RespectObstacles => respectObstacles;
+
+    public void SetRadius(float value)
+    {
+        radius = Mathf.Max(0.1f, value);
+    }
+
+    /// <summary>
+    /// Turning this off lets the creature sense through thin cover -
+    /// a late unlock that makes hiding places stop being absolute.
+    /// </summary>
+    public void SetRespectObstacles(bool value)
+    {
+        respectObstacles = value;
+    }
+
 
     // =========================================================
     // UNITY
@@ -132,9 +148,21 @@ public class ProximitySense : Sense
                 continue;
             }
 
+            /*
+             * Concealment blunts proximity too, but far less than it
+             * blunts sight - the square root keeps a hidden target
+             * detectable at point blank range. Being able to stand
+             * nose to nose with the creature in perfect safety would
+             * make lockers absurd.
+             */
+
+            float concealment =
+                Mathf.Sqrt(Concealment.VisibilityOf(collider));
+
             float strength =
                 Mathf.Clamp01(1f - (distance / radius)) *
-                maximumStrength;
+                maximumStrength *
+                concealment;
 
             if (strength > bestStrength)
             {

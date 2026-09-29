@@ -73,12 +73,32 @@ public class HearingSense : Sense
 
     private float lastHeardStrength;
 
+    private NoiseType lastHeardType;
+
 
     public override SenseChannel Channel => SenseChannel.Hearing;
+
+    public float Sensitivity => sensitivity;
+
+    /// <summary>Written by XenoProgression as hearing sharpens.</summary>
+    public void SetSensitivity(float value)
+    {
+        sensitivity = Mathf.Max(0f, value);
+    }
 
     public float LastHeardStrength => lastHeardStrength;
 
     public Vector3 LastHeardPosition => lastHeardPosition;
+
+    /// <summary>
+    /// What kind of noise the last consumed reading came from.
+    ///
+    /// Needed because the behaviour tree does not have one hearing
+    /// channel - it has HEARD_MOVEMENT and HEARD_COMBAT, and they gate
+    /// completely different branches. Without the type, everything
+    /// would land on one of them.
+    /// </summary>
+    public NoiseType LastHeardType => lastHeardType;
 
 
     // =========================================================
@@ -222,6 +242,8 @@ public class HearingSense : Sense
         lastHeardPosition = pendingPosition;
 
         lastHeardStrength = pendingStrength;
+
+        lastHeardType = pendingType;
 
         return SenseReading.Impulse(
             SenseChannel.Hearing,

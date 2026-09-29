@@ -81,6 +81,8 @@ public class PlayerNoiseEmitter : MonoBehaviour
 
     private PlayerController player;
 
+    private Concealment concealment;
+
     private float distanceSinceLastStep;
 
     private Vector3 lastPosition;
@@ -112,6 +114,8 @@ public class PlayerNoiseEmitter : MonoBehaviour
     private void Awake()
     {
         player = GetComponent<PlayerController>();
+
+        concealment = GetComponent<Concealment>();
 
         lastPosition = transform.position;
     }
@@ -221,12 +225,31 @@ public class PlayerNoiseEmitter : MonoBehaviour
 
     private float RadiusForCurrentStance()
     {
-        if (player.IsCrouching)
-            return crouchNoiseRadius;
+        float radius;
 
-        return player.IsSprinting
-            ? sprintNoiseRadius
-            : walkNoiseRadius;
+        if (player.IsCrouching)
+        {
+            radius = crouchNoiseRadius;
+        }
+        else
+        {
+            radius = player.IsSprinting
+                ? sprintNoiseRadius
+                : walkNoiseRadius;
+        }
+
+        /*
+         * Concealment muffles as well as hides - shifting your weight
+         * inside a locker carries less than the same movement in the
+         * open.
+         */
+
+        if (concealment != null)
+        {
+            radius *= concealment.Noise;
+        }
+
+        return radius;
     }
 
 

@@ -96,6 +96,36 @@ public class XenoLocomotion : MonoBehaviour
     private float facingTurnSpeed = 260f;
 
 
+    [Header("Vents / Off-Mesh Links")]
+    /*
+     * Unity's automatic traversal snaps the agent across a link in a
+     * straight line at walking pace, which for a vent reads as the
+     * creature gliding through a wall. Taking it over manually lets the
+     * crossing have a pause, an arc and a duration - and gives audio
+     * and animation something to hook onto.
+     */
+
+    [SerializeField]
+    private bool customLinkTraversal = true;
+
+    [SerializeField, Min(0.1f)]
+    private float linkTraversalSpeed = 3.5f;
+
+    /// <summary>
+    /// A beat before it commits, so vanishing into a duct is something
+    /// the player can register rather than a blink.
+    /// </summary>
+    [SerializeField, Min(0f)]
+    private float linkEntryPause = 0.35f;
+
+    /// <summary>
+    /// Lifts the midpoint of the crossing so it arcs instead of
+    /// scraping through geometry.
+    /// </summary>
+    [SerializeField, Min(0f)]
+    private float linkArcHeight = 0.4f;
+
+
     [Header("Debug")]
     [SerializeField]
     private bool drawGizmos = true;
@@ -106,6 +136,16 @@ public class XenoLocomotion : MonoBehaviour
     // =========================================================
 
     private NavMeshAgent agent;
+
+    private bool traversingLink;
+
+    private Vector3 linkStart;
+
+    private Vector3 linkEnd;
+
+    private float linkProgress;
+
+    private float linkWaitUntil;
 
     private Gait gait = Gait.Idle;
 
@@ -139,6 +179,17 @@ public class XenoLocomotion : MonoBehaviour
     public float TargetSpeed => SpeedFor(gait);
 
     public bool HasDestination => hasDestination;
+
+    /// <summary>True while crossing a vent or other link.</summary>
+    public bool IsTraversingLink => traversingLink;
+
+    /// <summary>
+    /// Raised as a crossing begins, carrying entry and exit points.
+    /// Audio and animation hang off this.
+    /// </summary>
+    public event System.Action<Vector3, Vector3> OnLinkTraversalStarted;
+
+    public event System.Action OnLinkTraversalFinished;
 
     public Vector3 Destination => destination;
 
@@ -200,6 +251,8 @@ public class XenoLocomotion : MonoBehaviour
 
         agent.updateRotation = !manageRotation;
 
+        agent.autoTraverseOffMeshLink = !customLinkTraversal;
+
         agent.acceleration = acceleration;
 
         agent.stoppingDistance = stoppingDistance;
@@ -213,7 +266,117 @@ public class XenoLocomotion : MonoBehaviour
         if (agent == null || !agent.isOnNavMesh)
             return;
 
+        if (customLinkTraversal && TickLinkTraversal())
+        {
+            /*
+             * Crossing a link owns position and rotation outright.
+             */
+
+            return;
+        }
+
         ApplyRotation();
+    }
+
+
+    // =========================================================
+    // OFF-MESH LINKS
+    // =========================================================
+
+    /// <summary>
+    /// Hand-drives the agent across a NavMeshLink.
+    ///
+    /// Returns true while a crossing is in progress, so the caller
+    /// knows to leave normal steering alone.
+    /// </summary>
+    private bool TickLinkTraversal()
+    {
+        if (!traversingLink)
+        {
+            if (!agent.isOnOffMeshLink)
+                return false;
+
+            BeginLinkTraversal();
+        }
+
+        if (Time.time < linkWaitUntil)
+        {
+            FaceLinkExit();
+
+            return true;
+        }
+
+        float span = Vector3.Distance(linkStart, linkEnd);
+
+        float step =
+            span > 0.01f
+                ? (linkTraversalSpeed * Time.deltaTime) / span
+                : 1f;
+
+        linkProgress = Mathf.Min(1f, linkProgress + step);
+
+        Vector3 position =
+            Vector3.Lerp(linkStart, linkEnd, linkProgress);
+
+        /*
+         * A half sine gives zero lift at both ends, so the creature
+         * arrives cleanly on the mesh rather than dropping onto it.
+         */
+
+        position.y +=
+            Mathf.Sin(linkProgress * Mathf.PI) * linkArcHeight;
+
+        agent.transform.position = position;
+
+        FaceLinkExit();
+
+        if (linkProgress < 1f)
+            return true;
+
+        EndLinkTraversal();
+
+        return true;
+    }
+
+
+    private void BeginLinkTraversal()
+    {
+        OffMeshLinkData data = agent.currentOffMeshLinkData;
+
+        linkStart = agent.transform.position;
+
+        linkEnd = data.endPos + Vector3.up * agent.baseOffset;
+
+        linkProgress = 0f;
+
+        traversingLink = true;
+
+        linkWaitUntil = Time.time + linkEntryPause;
+
+        OnLinkTraversalStarted?.Invoke(linkStart, linkEnd);
+    }
+
+
+    private void EndLinkTraversal()
+    {
+        traversingLink = false;
+
+        agent.CompleteOffMeshLink();
+
+        OnLinkTraversalFinished?.Invoke();
+    }
+
+
+    private void FaceLinkExit()
+    {
+        Vector3 delta = linkEnd - agent.transform.position;
+
+        delta.y = 0f;
+
+        if (delta.sqrMagnitude < 0.01f)
+            return;
+
+        RotateTowards(delta.normalized, runTurnSpeed);
     }
 
 

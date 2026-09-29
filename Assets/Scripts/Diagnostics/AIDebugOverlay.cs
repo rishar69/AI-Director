@@ -48,6 +48,36 @@ public class AIDebugOverlay : MonoBehaviour
     [SerializeField]
     private LocomotionTestDriver testDriver;
 
+    [SerializeField]
+    private XenoBrain brain;
+
+    [SerializeField]
+    private PlayerKillPlaceholder killHandler;
+
+    [SerializeField]
+    private AIDirector director;
+
+    [SerializeField]
+    private PlayerHiding hiding;
+
+    [SerializeField]
+    private PlayerDeterrent deterrent;
+
+    [SerializeField]
+    private PlayerThrower thrower;
+
+    [SerializeField]
+    private MotionTracker tracker;
+
+    [SerializeField]
+    private XenoProgression progression;
+
+    [SerializeField]
+    private XenoBehaviourTree tree;
+
+    [SerializeField]
+    private XenoSenses senses;
+
 
     [Header("Display")]
     [SerializeField]
@@ -115,6 +145,60 @@ public class AIDebugOverlay : MonoBehaviour
         {
             testDriver =
                 locomotion.GetComponent<LocomotionTestDriver>();
+        }
+
+        if (brain == null)
+        {
+            brain = FindFirstObjectByType<XenoBrain>();
+        }
+
+        if (director == null)
+        {
+            director = FindFirstObjectByType<AIDirector>();
+        }
+
+        if (progression == null && brain != null)
+        {
+            progression = brain.GetComponent<XenoProgression>();
+        }
+
+        if (tree == null)
+        {
+            tree = FindFirstObjectByType<XenoBehaviourTree>();
+        }
+
+        if (senses == null)
+        {
+            senses = FindFirstObjectByType<XenoSenses>();
+        }
+
+        if (player != null)
+        {
+            if (hiding == null)
+            {
+                hiding = player.GetComponent<PlayerHiding>();
+            }
+
+            if (deterrent == null)
+            {
+                deterrent = player.GetComponent<PlayerDeterrent>();
+            }
+
+            if (thrower == null)
+            {
+                thrower = player.GetComponent<PlayerThrower>();
+            }
+
+            if (tracker == null)
+            {
+                tracker = player.GetComponent<MotionTracker>();
+            }
+        }
+
+        if (killHandler == null && player != null)
+        {
+            killHandler =
+                player.GetComponent<PlayerKillPlaceholder>();
         }
 
         CheckNavMesh();
@@ -274,6 +358,16 @@ public class AIDebugOverlay : MonoBehaviour
 
         AppendPerceptionSection();
 
+        AppendChannelSection();
+
+        AppendTreeSection();
+
+        AppendBrainSection();
+
+        AppendDirectorSection();
+
+        AppendCounterplaySection();
+
         AppendLocomotionSection();
 
         AppendNoiseSection();
@@ -344,6 +438,311 @@ public class AIDebugOverlay : MonoBehaviour
         else
         {
             Line("last known", "none");
+        }
+    }
+
+
+    // =========================================================
+    // COUNTERPLAY
+    // =========================================================
+
+    private void AppendCounterplaySection()
+    {
+        bool any =
+            hiding != null ||
+            deterrent != null ||
+            thrower != null ||
+            tracker != null;
+
+        if (!any)
+            return;
+
+        builder.AppendLine();
+
+        Header("COUNTERPLAY");
+
+        if (hiding != null)
+        {
+            Line(
+                "hiding",
+                hiding.IsHiding
+                    ? (hiding.IsPeeking
+                        ? "<color=#FF9436>PEEKING</color>"
+                        : "<color=#8FD98F>hidden</color>")
+                    : "exposed"
+            );
+
+            Line(
+                "visibility",
+                Bar(hiding.Visibility) + "  " +
+                hiding.Visibility.ToString("F2")
+            );
+        }
+
+        if (deterrent != null)
+        {
+            Line(
+                "fuel",
+                Bar(deterrent.FuelFraction) + "  " +
+                deterrent.Fuel.ToString("F1") + "s"
+            );
+
+            /*
+             * Effectiveness matters more than fuel - it is the number
+             * that decides whether saving the flamethrower was right.
+             */
+
+            Line(
+                "effectiveness",
+                Bar(deterrent.Effectiveness) + "  " +
+                (deterrent.Effectiveness * 100f).ToString("F0") + "%"
+            );
+
+            if (deterrent.IsFiring)
+            {
+                Line("firing", "<color=#FF6B35>yes</color>");
+            }
+        }
+
+        if (thrower != null)
+        {
+            Line("noisemakers", thrower.Remaining.ToString());
+        }
+
+        if (tracker != null)
+        {
+            Line(
+                "tracker",
+                tracker.IsActive
+                    ? "<color=#FF9436>ON - pinging</color>"
+                    : "off"
+            );
+
+            if (tracker.IsActive && tracker.NearestDistance >= 0f)
+            {
+                Line(
+                    "nearest",
+                    tracker.NearestDistance.ToString("F1") + "m"
+                );
+            }
+        }
+    }
+
+
+    // =========================================================
+    // DIRECTOR
+    // =========================================================
+
+    private void AppendDirectorSection()
+    {
+        if (director == null)
+            return;
+
+        builder.AppendLine();
+
+        Header("DIRECTOR");
+
+        Line(
+            "menace",
+            Bar(director.Menace) + "  " +
+            director.Menace.ToString("F2")
+        );
+
+        Line(
+            "pressure",
+            director.Pressure.ToString("F2")
+        );
+
+        Line(
+            "mode",
+            director.IsPushingAway
+                ? "<color=#7FD4FF>pushing away</color>"
+                : director.IsCommitting
+                    ? "<color=#FF5555>commit</color>"
+                    : "<color=#8FD98F>observing</color>"
+        );
+
+        MenaceSample sample = director.LastSample;
+
+        if (sample.HasCreature)
+        {
+            Line(
+                "distance",
+                sample.Distance.ToString("F1") + "m" +
+                (sample.VisibleToPlayer ? "  <b>ON SCREEN</b>" : "")
+            );
+        }
+
+        Line("quiet for", director.QuietTime.ToString("F0") + "s");
+
+        Line("oblivious", director.UnawareTime.ToString("F0") + "s");
+
+        if (!director.HasZones)
+        {
+            Warn("no zones - bake the NavMesh, then rebuild");
+        }
+    }
+
+
+    // =========================================================
+    // SENSE CHANNELS
+    // =========================================================
+
+    private void AppendChannelSection()
+    {
+        if (senses == null)
+            return;
+
+        builder.AppendLine();
+
+        Header("SENSE CHANNELS");
+
+        builder.Append("  ");
+
+        builder.AppendLine(senses.Describe());
+    }
+
+
+    // =========================================================
+    // BEHAVIOUR TREE
+    // =========================================================
+
+    private void AppendTreeSection()
+    {
+        if (tree == null)
+            return;
+
+        builder.AppendLine();
+
+        Header("BEHAVIOUR TREE");
+
+        Line("branch", tree.ActiveBranchName());
+
+        XenoBlackboard board = tree.Blackboard;
+
+        if (board == null)
+            return;
+
+        Line("motivations", board.DescribeMotivations());
+
+        Line("role", board.CurrentRole.ToString());
+
+        Line("withdraw", board.Withdraw.ToString());
+
+        Line(
+            "retreat gauge",
+            board.GetGaugeLevel(GaugeId.Retreat) + "  " +
+            board.GetGaugeAmount(GaugeId.Retreat).ToString("F2")
+        );
+
+        /*
+         * The live path through the tree. Only running and succeeding
+         * nodes are printed, so this stays two or three lines rather
+         * than the whole graph.
+         */
+
+        string trace = tree.BuildTrace();
+
+        if (string.IsNullOrEmpty(trace))
+            return;
+
+        builder.Append("<color=#9AA5B1>");
+
+        builder.Append(trace);
+
+        builder.AppendLine("</color>");
+    }
+
+
+    // =========================================================
+    // BRAIN
+    // =========================================================
+
+    private void AppendBrainSection()
+    {
+        if (brain == null)
+            return;
+
+        builder.AppendLine();
+
+        Header("BRAIN");
+
+        Line(
+            "state",
+            ColorForState(brain.CurrentState) +
+            brain.CurrentState +
+            "</color>  " +
+            brain.TimeInCurrentState.ToString("F1") + "s"
+        );
+
+        if (brain.IsDeterred)
+        {
+            Warn("deterred - retreating");
+        }
+
+        Line(
+            "contact",
+            brain.HasLiveContact ? "live" : "cold"
+        );
+
+        Line(
+            "hints",
+            brain.Hints != null
+                ? "director connected"
+                : "autonomous (no director yet)"
+        );
+
+        if (progression != null)
+        {
+            Line(
+                "learned",
+                progression.CurrentStageName + "  (" +
+                progression.AppliedStages + "/" +
+                progression.TotalStages + ", " +
+                progression.ElapsedMinutes.ToString("F1") + " min)"
+            );
+        }
+
+        if (locomotion != null && locomotion.IsTraversingLink)
+        {
+            Line("vent", "<color=#E066FF>traversing</color>");
+        }
+
+        if (killHandler != null && killHandler.Deaths > 0)
+        {
+            Line("caught", killHandler.Deaths.ToString() + "x");
+        }
+    }
+
+
+    /// <summary>
+    /// Escalation reads as a colour ramp: green idle, through yellow
+    /// and orange, to red once it has committed.
+    /// </summary>
+    private static string ColorForState(XenoStateId state)
+    {
+        switch (state)
+        {
+            case XenoStateId.Attack:
+                return "<color=#FF3B3B>";
+
+            case XenoStateId.Chase:
+                return "<color=#FF6B35>";
+
+            case XenoStateId.Stalk:
+                return "<color=#FF9436>";
+
+            case XenoStateId.Search:
+                return "<color=#FFE14D>";
+
+            case XenoStateId.Investigate:
+                return "<color=#D6E36B>";
+
+            case XenoStateId.Retreat:
+                return "<color=#7FD4FF>";
+
+            default:
+                return "<color=#8FD98F>";
         }
     }
 
