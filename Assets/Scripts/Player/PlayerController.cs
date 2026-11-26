@@ -195,6 +195,57 @@ public class PlayerController : MonoBehaviour
     /// </summary>
     public bool LookLocked { get; set; }
 
+    /// <summary>
+    /// Holds the body completely still - no gravity, no motion, no
+    /// stance changes. Used while hidden: the player is tucked inside
+    /// furniture, and letting gravity push the capsule against the
+    /// tabletop would shove them about.
+    /// </summary>
+    public bool HoldStill { get; set; }
+
+    public float Pitch => pitch;
+
+
+    private bool lookLimited;
+
+    private float lookCenterYaw, lookYawRange, lookMinPitch, lookMaxPitch;
+
+
+    /// <summary>
+    /// Restricts looking to a cone - yaw within <paramref name="yawRange"/>
+    /// of <paramref name="centerYaw"/>, pitch between the two limits.
+    /// Hiding under a desk lets you look out of it, not turn round
+    /// inside it.
+    /// </summary>
+    public void LimitLook(float centerYaw, float yawRange, float pitchMin, float pitchMax)
+    {
+        lookLimited = true;
+        lookCenterYaw = centerYaw;
+        lookYawRange = yawRange;
+        lookMinPitch = pitchMin;
+        lookMaxPitch = pitchMax;
+    }
+
+
+    public void ClearLookLimit()
+    {
+        lookLimited = false;
+    }
+
+
+    /// <summary>Points the body and camera directly - for scripted moves.</summary>
+    public void SetLook(float yaw, float newPitch)
+    {
+        transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+
+        pitch = newPitch;
+
+        if (cameraPivot != null)
+        {
+            cameraPivot.localRotation = Quaternion.Euler(pitch, 0f, 0f);
+        }
+    }
+
 
     // =========================================================
     // UNITY
@@ -234,6 +285,9 @@ public class PlayerController : MonoBehaviour
             return;
 
         UpdateLook();
+
+        if (HoldStill)
+            return;
 
         if (MovementLocked)
         {
@@ -396,11 +450,23 @@ public class PlayerController : MonoBehaviour
             Space.Self
         );
 
+        if (lookLimited)
+        {
+            float offset =
+                Mathf.Clamp(
+                    Mathf.DeltaAngle(lookCenterYaw, transform.eulerAngles.y),
+                    -lookYawRange,
+                    lookYawRange
+                );
+
+            transform.rotation = Quaternion.Euler(0f, lookCenterYaw + offset, 0f);
+        }
+
         pitch =
             Mathf.Clamp(
                 pitch + pitchDelta,
-                minPitch,
-                maxPitch
+                lookLimited ? lookMinPitch : minPitch,
+                lookLimited ? lookMaxPitch : maxPitch
             );
 
         if (cameraPivot != null)

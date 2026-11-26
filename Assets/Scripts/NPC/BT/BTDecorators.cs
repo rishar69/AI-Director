@@ -45,6 +45,11 @@ public class BTTimerScope : BTNode
 
     public BTNode Child => child;
 
+    private BTNode[] traceChildren;
+
+    public override System.Collections.Generic.IReadOnlyList<BTNode> TraceChildren =>
+        traceChildren ??= (child != null ? new[] { child } : new BTNode[0]);
+
 
     private bool wasRunning;
 
@@ -228,6 +233,12 @@ public class BTAlwaysFail : BTNode
         this.child = child;
     }
 
+    private BTNode[] traceChildren;
+
+    public override System.Collections.Generic.IReadOnlyList<BTNode> TraceChildren =>
+        traceChildren ??= (child != null ? new[] { child } : new BTNode[0]);
+
+
 
     protected override BTStatus OnTick(BTContext context)
     {
@@ -273,6 +284,12 @@ public class BTInverter : BTNode
     {
         this.child = child;
     }
+
+    private BTNode[] traceChildren;
+
+    public override System.Collections.Generic.IReadOnlyList<BTNode> TraceChildren =>
+        traceChildren ??= (child != null ? new[] { child } : new BTNode[0]);
+
 
 
     protected override BTStatus OnTick(BTContext context)

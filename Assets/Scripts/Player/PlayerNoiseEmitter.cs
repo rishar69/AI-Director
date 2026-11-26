@@ -191,8 +191,17 @@ public class PlayerNoiseEmitter : MonoBehaviour
     }
 
 
+    /// <summary>
+    /// Fired on every stride, so the audible footstep (PlayerAudio)
+    /// lands on exactly the step the creature hears.
+    /// </summary>
+    public event System.Action OnFootstep;
+
+
     private void EmitFootstep()
     {
+        OnFootstep?.Invoke();
+
         float radius =
             RadiusForCurrentStance() *
             Random.Range(1f - radiusJitter, 1f + radiusJitter);

@@ -98,6 +98,13 @@ public class Noisemaker : MonoBehaviour
 
         landed = true;
 
+        TrailRenderer trail = GetComponent<TrailRenderer>();
+
+        if (trail != null)
+        {
+            trail.emitting = false;
+        }
+
         Clatter();
     }
 
@@ -117,6 +124,12 @@ public class Noisemaker : MonoBehaviour
 
             null
         );
+
+        /*
+         * What the PLAYER hears, at the same spot. Without it the throw
+         * was silent to the player and only the NPC knew it had landed.
+         */
+        GameArt.Play(GameArt.Clack, transform.position, Mathf.Clamp01(currentRadius / impactNoiseRadius));
 
         clattersRemaining--;
 

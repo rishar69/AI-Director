@@ -1,28 +1,35 @@
 using UnityEngine;
+using UnityEngine.AI;
 
 /// <summary>
-/// The second brain, speaking the blackboard's vocabulary.
+/// The second brain: the Macro AI.
 ///
-/// Replaces AIDirector, which was written against the superseded hint
-/// design (IXenoDirectorHints, zone hints, XenoStateId). The pacing
-/// logic is the same idea; the output is not. This one writes only what
-/// the CATHODE blackboard actually exposes.
+/// Modelled on the director in Alien: Isolation. It always knows where
+/// the player is, and it uses that for one thing only - deciding where
+/// the creature should wander while the creature has no trace of the
+/// player. It never hands the creature the player's position.
 ///
-/// WHAT IT MAY WRITE, AND NOTHING ELSE:
-///   - GaugeId.Retreat        how much the player is being oppressed
-///   - WithdrawState          "back off" / "you are backing off"
-///   - AlienPermission.*      whole classes of behaviour switched off
+/// It works in two modes:
 ///
-/// WHAT IT MUST NEVER DO. It may not set a destination, write a
-/// perception, raise a sense, force a branch, or hand the creature the
-/// player's position. It knows exactly where the player is; the
-/// creature must never learn that from here. Every lever above is
-/// something the TREE then interprets - which is the entire point of
-/// the split, and the reason the creature still has to find you with
-/// its own senses even while the Director is steering the pacing.
+///   PRESSURE   the creature is nudged to wander the player's general
+///              area (never closer than minimumPullDistance), so the
+///              player keeps hearing it nearby.
 ///
-/// Its job is pacing, not difficulty. A horror game that never relents
-/// is exhausting; one that never re-engages is boring.
+///   EASE OFF   the menace gauge has filled: the player has been under
+///              pressure long enough. The creature is sent to wander a
+///              far part of the museum for a while, so the player can
+///              breathe and make progress. Then back to PRESSURE.
+///
+/// MENACE GAUGE - how much pressure the player is under right now. It
+/// rises while the creature is close BY WALKING PATH (a creature behind
+/// a wall in another room counts for less) and faster while the player
+/// can see it. Attacking does not add to it, as in Isolation. It falls
+/// while the creature is far away.
+///
+/// NEVER BREAKS OFF A LIVE HUNT. The Director's area is only used by
+/// the tree's lowest roaming branch. While the creature has a trace of
+/// the player it follows its own senses, and a full gauge waits until
+/// that hunt is over before the creature is sent away.
 /// </summary>
 public class XenoDirector : MonoBehaviour
 {
@@ -34,118 +41,95 @@ public class XenoDirector : MonoBehaviour
     [SerializeField]
     private Transform player;
 
-    /// <summary>
-    /// Being watched is a large part of feeling oppressed, so the
-    /// Director needs to know roughly what is on screen.
-    /// </summary>
+    /// <summary>Used to tell whether the creature is on the player's screen.</summary>
     [SerializeField]
     private Camera playerCamera;
 
 
-    [Header("Oppression")]
-    /// <summary>
-    /// Distance at which the creature stops contributing pressure at
-    /// all.
-    /// </summary>
+    [Header("Menace gauge")]
+    /// <summary>Walking-path distance at which the creature stops adding menace.</summary>
     [SerializeField, Min(5f)]
-    private float pressureRange = 25f;
+    private float menaceRange = 20f;
 
     /// <summary>
-    /// How fast the retreat gauge fills while the player is being
-    /// crowded, in gauge units per second.
-    ///
-    /// DO THE ARITHMETIC BEFORE CHANGING THIS. The rate is multiplied
-    /// by proximity and then by the visible and attack weights, so the
-    /// worst case is buildRate x 1 x 1.4 x 1.8 = buildRate x 2.52.
-    /// At 0.02 that is 0.05/sec, so being mauled at point blank takes
-    /// about 16 seconds to earn a withdrawal, and being stalked at ten
-    /// metres in the open takes nearer fifty.
-    ///
-    /// It was 0.11 to begin with, which meant three seconds - the
-    /// creature walked up to the player and immediately turned round.
-    /// Oppression is supposed to accumulate over a scene, not a breath.
+    /// Menace gained per second at point blank, before the visible
+    /// weight. With visibleWeight 2 the worst case is 0.05/s, so being
+    /// close and in view fills the gauge in about 20 seconds; the
+    /// creature lurking 10 m away unseen takes about 80.
     /// </summary>
     [SerializeField, Min(0.001f)]
-    private float buildRate = 0.02f;
+    private float buildRate = 0.025f;
 
+    /// <summary>Multiplier while the player can actually see the creature.</summary>
+    [SerializeField, Min(1f)]
+    private float visibleWeight = 2f;
+
+    /// <summary>Menace lost per second while the creature is out of range.</summary>
     [SerializeField, Min(0.001f)]
-    private float decayRate = 0.05f;
+    private float decayRate = 0.02f;
+
+    /// <summary>How often the walking-path distance is recalculated.</summary>
+    [SerializeField, Min(0.1f)]
+    private float pathCheckSeconds = 0.5f;
+
+
+    [Header("Ease off")]
+    /// <summary>How long the creature is kept away once the gauge has filled.</summary>
+    [SerializeField, Min(5f)]
+    private float easeOffSeconds = 40f;
+
+    /// <summary>Menace lost per second during an ease off.</summary>
+    [SerializeField, Min(0.001f)]
+    private float easeOffDrainRate = 0.05f;
+
+    /// <summary>During an ease off the area goes at least this far from the player.</summary>
+    [SerializeField, Min(5f)]
+    private float easeOffDistance = 22f;
+
+
+    [Header("Pick area")]
+    /// <summary>Off, the creature roams wherever it has not looked.</summary>
+    [SerializeField]
+    private bool steerRoaming = true;
 
     /// <summary>
-    /// Extra weight while the creature is actually visible.
+    /// THE TWO-BRAIN GUARD. The area's centre is never closer to the
+    /// player than this, so the area points at a part of the map, not
+    /// at the player.
+    /// </summary>
+    [SerializeField, Min(4f)]
+    private float minimumPullDistance = 9f;
+
+    /// <summary>In PRESSURE the area sits between minimumPullDistance and this.</summary>
+    [SerializeField, Min(5f)]
+    private float pressureMaxDistance = 18f;
+
+    [SerializeField, Min(2f)]
+    private float areaRadius = 8f;
+
+    /// <summary>The area is re-picked this often...</summary>
+    [SerializeField, Min(2f)]
+    private float areaRefreshSeconds = 15f;
+
+    /// <summary>...or when the player has moved this far from where it was picked.</summary>
+    [SerializeField, Min(2f)]
+    private float areaRefreshPlayerMoved = 12f;
+
+
+    [Header("Caught (respawn mode only)")]
+    /// <summary>
+    /// Only used when PlayerDeathSequence respawns the player instead
+    /// of restarting the level: an ease off of this length, and the
+    /// creature moved far away and out of sight.
     /// </summary>
     [SerializeField, Min(0f)]
-    private float visibleWeight = 1.4f;
+    private float easeOffAfterCaught = 35f;
 
-    /// <summary>
-    /// Extra weight while it is committed to attacking.
-    /// </summary>
-    [SerializeField, Min(0f)]
-    private float attackWeight = 1.8f;
-
-
-    [Header("Withdrawal")]
-    /// <summary>
-    /// OFF BY DEFAULT, deliberately.
-    ///
-    /// With this off the Director still measures oppression - the gauge
-    /// is useful to watch - but it never asks for a withdrawal, so
-    /// ScriptedWithdrawRequested stays false and the withdrawal branch
-    /// fails through as though it were still a stub. The creature hunts
-    /// without ever being called off.
-    ///
-    /// That is the right default for now. Pacing only reads as mercy
-    /// once the hunt underneath it is worth being rescued FROM, and
-    /// tuning the two at the same time means never knowing which one
-    /// you are feeling. Turn it on when the hunt is settled.
-    /// </summary>
-    [SerializeField]
-    private bool requestWithdrawals = false;
-
-    [SerializeField, Range(0f, 1f)]
-    private float withdrawAbove = 0.80f;
-
-    /// <summary>
-    /// The gauge has to fall this far before the creature is allowed
-    /// back. The gap to withdrawAbove is what stops it yo-yoing on the
-    /// threshold, and it is why retreat feels like a decision rather
-    /// than a flicker.
-    /// </summary>
-    [SerializeField, Range(0f, 1f)]
-    private float releaseBelow = 0.40f;
-
-    /// <summary>
-    /// How far out the creature must get before a withdrawal is
-    /// considered served.
-    /// </summary>
     [SerializeField, Min(5f)]
-    private float withdrawClearDistance = 30f;
-
-    /// <summary>
-    /// Hard cap on a withdrawal, whatever the gauge and distance say.
-    ///
-    /// A SAFETY VALVE, NOT A TUNING KNOB. On a level smaller than
-    /// withdrawClearDistance across, the creature can never get clear,
-    /// the release condition can never be met, and it would spend the
-    /// rest of the session backing away from a wall. Nothing else in
-    /// the loop can break that deadlock, because the Director stops
-    /// pushing only when the creature succeeds.
-    /// </summary>
-    [SerializeField, Min(5f)]
-    private float maximumWithdrawTime = 45f;
+    private float relocateMinimumDistance = 20f;
 
 
-    [Header("Permissions")]
-    /// <summary>
-    /// Traps and ambushes are revoked while withdrawing. Setting one up
-    /// in the middle of backing off would undo the relief the
-    /// withdrawal exists to give.
-    /// </summary>
-    [SerializeField]
-    private bool revokeTrapsWhileWithdrawing = true;
-
-
-    [Header("Visibility Test")]
+    [Header("Visibility test")]
     [SerializeField]
     private LayerMask occlusionMask = ~0;
 
@@ -159,21 +143,59 @@ public class XenoDirector : MonoBehaviour
     // STATE
     // =========================================================
 
+    public enum DirectorMode
+    {
+        /// <summary>Keep the creature wandering the player's general area.</summary>
+        Pressure = 0,
+
+        /// <summary>Send the creature far away for a while.</summary>
+        EaseOff = 1
+    }
+
+
     private XenoBlackboard blackboard;
+
+    private PerceptionSystem creaturePerception;
 
     private Transform creature;
 
-    private float gauge;
+    private float menace;
 
-    private float withdrawStartedAt = -1f;
+    private DirectorMode mode = DirectorMode.Pressure;
+
+    private float easeOffUntil;
+
+    private bool easeOffPending;
+
+    private float pathDistance = float.MaxValue;
+
+    private float nextPathCheck;
+
+    private NavMeshPath path;
+
+    private float nextAreaAt;
+
+    private Vector3 areaAnchor;
+
+    private bool hasArea;
 
 
-    public float Retreat => gauge;
+    /// <summary>0..1: how much pressure the player is under.</summary>
+    public float Menace => menace;
 
-    public WithdrawState Withdraw =>
-        blackboard != null
-            ? blackboard.Withdraw
-            : WithdrawState.NotWithdrawing;
+    public DirectorMode Mode => mode;
+
+    public float EaseOffRemaining => mode == DirectorMode.EaseOff ? Mathf.Max(0f, easeOffUntil - Time.time) : 0f;
+
+    /// <summary>The gauge is full but the creature is mid-hunt; the ease off waits for it to end.</summary>
+    public bool EaseOffPending => easeOffPending;
+
+    /// <summary>True while the creature has its own trace of the player.</summary>
+    public bool CreatureHunting =>
+        creaturePerception != null && creaturePerception.HasLastKnownPosition;
+
+    /// <summary>Walking-path distance from the creature to the player, as last measured.</summary>
+    public float PathDistance => pathDistance;
 
 
     // =========================================================
@@ -182,12 +204,14 @@ public class XenoDirector : MonoBehaviour
 
     private void Awake()
     {
-        DisableLegacyDirector();
+        if (enabled)
+        {
+            DisableLegacyDirector();
+        }
 
         if (player == null)
         {
-            PlayerController found =
-                FindFirstObjectByType<PlayerController>();
+            PlayerController found = FindFirstObjectByType<PlayerController>();
 
             if (found != null)
             {
@@ -199,14 +223,12 @@ public class XenoDirector : MonoBehaviour
         {
             playerCamera = Camera.main;
         }
+
+        path = new NavMeshPath();
     }
 
 
-    /// <summary>
-    /// The Phase 5 Director and this one would both be pacing the same
-    /// creature through different vocabularies. Same arrangement as
-    /// XenoBehaviourTree switching off XenoBrain.
-    /// </summary>
+    /// <summary>The old Director speaks a superseded vocabulary; only one may pace the creature.</summary>
     private void DisableLegacyDirector()
     {
         AIDirector legacy = GetComponent<AIDirector>();
@@ -216,11 +238,7 @@ public class XenoDirector : MonoBehaviour
 
         legacy.enabled = false;
 
-        Debug.LogWarning(
-            "[XenoDirector] Disabled AIDirector - it speaks the " +
-            "superseded hint vocabulary.",
-            this
-        );
+        Debug.LogWarning("[XenoDirector] Disabled AIDirector - it speaks the superseded hint vocabulary.", this);
     }
 
 
@@ -229,13 +247,14 @@ public class XenoDirector : MonoBehaviour
         if (!Acquire())
             return;
 
-        float distance = FlatDistance();
+        UpdatePathDistance();
 
-        UpdateGauge(distance);
+        /* Mode first: a gauge that filled last frame is acted on before it can drift. */
+        UpdateMode();
 
-        UpdateWithdrawal(distance);
+        UpdateMenace();
 
-        UpdatePermissions();
+        UpdateArea();
     }
 
 
@@ -251,70 +270,89 @@ public class XenoDirector : MonoBehaviour
             creature = blackboard.transform;
         }
 
+        if (creaturePerception == null && creature != null)
+        {
+            creaturePerception = creature.GetComponent<PerceptionSystem>();
+        }
+
         return player != null && creature != null;
     }
 
 
-    private float FlatDistance()
-    {
-        Vector3 delta = creature.position - player.position;
-
-        delta.y = 0f;
-
-        return delta.magnitude;
-    }
-
-
     // =========================================================
-    // OPPRESSION
+    // MENACE GAUGE
     // =========================================================
 
     /// <summary>
-    /// Fills while the creature is close, seen, or hunting; drains
-    /// otherwise.
-    ///
-    /// Deliberately continuous rather than event driven. Oppression is
-    /// not a thing that happens, it is a thing that accumulates - two
-    /// minutes of being circled at ten metres should cost more than one
-    /// jump scare, and only an integrating measure gets that right.
+    /// Walking distance, not straight-line distance: a creature on the
+    /// other side of a wall is far less of a threat than one in the
+    /// same room. A path the NavMesh cannot complete counts as far.
     /// </summary>
-    private void UpdateGauge(float distance)
+    private void UpdatePathDistance()
     {
-        float proximity =
-            distance >= pressureRange
-                ? 0f
-                : 1f - (distance / pressureRange);
+        if (Time.time < nextPathCheck)
+            return;
 
-        float weight = proximity;
+        nextPathCheck = Time.time + pathCheckSeconds;
 
-        if (proximity > 0f)
+        float flat = FlatDistance(creature.position, player.position);
+
+        if (flat > menaceRange * 2f)
         {
-            if (IsVisibleToPlayer())
-            {
-                weight *= visibleWeight;
-            }
-
-            if (blackboard.HasMotivation(Motivation.Attack))
-            {
-                weight *= attackWeight;
-            }
+            pathDistance = flat;
+            return;
         }
 
-        gauge =
-            weight > 0f
-                ? Mathf.Clamp01(
-                    gauge + buildRate * weight * Time.deltaTime)
-                : Mathf.Clamp01(
-                    gauge - decayRate * Time.deltaTime);
+        if (NavMesh.CalculatePath(creature.position, player.position, NavMesh.AllAreas, path) &&
+            path.status == NavMeshPathStatus.PathComplete)
+        {
+            float length = 0f;
 
-        blackboard.SetGaugeAmount(GaugeId.Retreat, gauge);
+            for (int i = 1; i < path.corners.Length; i++)
+            {
+                length += Vector3.Distance(path.corners[i - 1], path.corners[i]);
+            }
+
+            pathDistance = length;
+        }
+        else
+        {
+            pathDistance = flat * 1.5f;
+        }
     }
 
 
     /// <summary>
-    /// Rough on-screen test. Precision is not the point - the gauge
-    /// only needs to know roughly whether the thing is being looked at.
+    /// Continuous, not event driven: two minutes of being circled at
+    /// ten metres should weigh more than one close call.
     /// </summary>
+    private void UpdateMenace()
+    {
+        if (mode == DirectorMode.EaseOff)
+        {
+            menace = Mathf.Clamp01(menace - easeOffDrainRate * Time.deltaTime);
+            return;
+        }
+
+        /* A break is already owed; hold the gauge full until it is given. */
+        if (easeOffPending)
+            return;
+
+        float closeness = pathDistance >= menaceRange ? 0f : 1f - pathDistance / menaceRange;
+
+        if (closeness <= 0f)
+        {
+            menace = Mathf.Clamp01(menace - decayRate * Time.deltaTime);
+            return;
+        }
+
+        float weight = closeness * (IsVisibleToPlayer() ? visibleWeight : 1f);
+
+        menace = Mathf.Clamp01(menace + buildRate * weight * Time.deltaTime);
+    }
+
+
+    /// <summary>Rough on-screen test: in the camera's view and not behind a wall.</summary>
     private bool IsVisibleToPlayer()
     {
         if (playerCamera == null)
@@ -331,125 +369,231 @@ public class XenoDirector : MonoBehaviour
         if (distance < 0.01f)
             return false;
 
-        float angle =
-            Vector3.Angle(playerCamera.transform.forward, delta);
-
-        if (angle > playerCamera.fieldOfView * 0.6f)
+        if (Vector3.Angle(playerCamera.transform.forward, delta) > playerCamera.fieldOfView * 0.6f)
             return false;
 
-        return !Physics.Raycast(
-            eye,
-            delta / distance,
-            distance - 0.3f,
-            occlusionMask,
-            QueryTriggerInteraction.Ignore
-        );
+        return !Physics.Raycast(eye, delta / distance, distance - 0.3f, occlusionMask, QueryTriggerInteraction.Ignore);
     }
 
 
     // =========================================================
-    // WITHDRAWAL
+    // MODE
     // =========================================================
 
-    private void UpdateWithdrawal(float distance)
+    private void UpdateMode()
     {
-        if (!requestWithdrawals)
+        if (mode == DirectorMode.Pressure)
         {
             /*
-             * Clear any request left over from the toggle being
-             * switched off mid-session, or the creature would stay
-             * withdrawing forever with nothing left to release it.
+             * Once the player has been under full pressure the break is
+             * owed: it is given the moment the hunt ends, even if the
+             * gauge has drifted down meanwhile.
              */
-
-            if (blackboard.Withdraw != WithdrawState.NotWithdrawing)
+            if (easeOffPending)
             {
-                blackboard.SetWithdrawState(
-                    WithdrawState.NotWithdrawing);
+                if (!CreatureHunting) EnterEaseOff(easeOffSeconds, "menace was full, hunt over");
 
-                withdrawStartedAt = -1f;
+                return;
             }
 
-            return;
-        }
+            if (menace < 1f)
+                return;
 
-        WithdrawState state = blackboard.Withdraw;
-
-        if (state == WithdrawState.NotWithdrawing)
-        {
-            if (gauge >= withdrawAbove)
+            if (CreatureHunting)
             {
-                blackboard.SetWithdrawState(
-                    WithdrawState.NeedsToWithdraw);
+                /* Never break off a live hunt: wait for it to end. */
+                if (!easeOffPending) Log("menace full - waiting for the hunt to end before easing off");
 
-                withdrawStartedAt = Time.time;
-
-                Log("requesting withdrawal");
+                easeOffPending = true;
+                return;
             }
 
+            EnterEaseOff(easeOffSeconds, "menace full");
             return;
         }
 
-        bool timedOut =
-            withdrawStartedAt >= 0f &&
-            Time.time - withdrawStartedAt >= maximumWithdrawTime;
-
-        if (timedOut)
+        if (Time.time >= easeOffUntil)
         {
-            /*
-             * Bleed the gauge off as well, or the next frame simply
-             * asks for another withdrawal and nothing has changed.
-             */
+            mode = DirectorMode.Pressure;
+            hasArea = false;
 
-            gauge = Mathf.Min(gauge, releaseBelow);
-
-            blackboard.SetGaugeAmount(GaugeId.Retreat, gauge);
-
-            blackboard.SetWithdrawState(
-                WithdrawState.NotWithdrawing);
-
-            withdrawStartedAt = -1f;
-
-            Log("withdrawal timed out - releasing");
-
-            return;
-        }
-
-        /*
-         * Served only when BOTH conditions hold - the pressure has
-         * genuinely come off AND the creature is actually somewhere
-         * else. Releasing on the gauge alone would let it turn round
-         * while still standing in the doorway.
-         */
-
-        bool relieved =
-            gauge <= releaseBelow &&
-            distance >= withdrawClearDistance;
-
-        if (relieved)
-        {
-            blackboard.SetWithdrawState(
-                WithdrawState.NotWithdrawing);
-
-            withdrawStartedAt = -1f;
-
-            Log("withdrawal served");
+            Log("break over - back to PRESSURE");
         }
     }
 
 
-    private void UpdatePermissions()
+    private void EnterEaseOff(float seconds, string why)
     {
-        bool withdrawing =
-            blackboard.Withdraw != WithdrawState.NotWithdrawing;
+        mode = DirectorMode.EaseOff;
+        easeOffUntil = Time.time + seconds;
+        easeOffPending = false;
+        hasArea = false;
 
-        bool allow =
-            !withdrawing || !revokeTrapsWhileWithdrawing;
+        Log("EASE OFF for " + seconds.ToString("F0") + "s (" + why + ")");
+    }
 
-        blackboard.SetAllowed(AlienPermission.WillKilltrap, allow);
 
-        blackboard.SetAllowed(AlienPermission.WillAmbush, allow);
+    // =========================================================
+    // PICK AREA
+    // =========================================================
 
-        blackboard.SetAllowed(AlienPermission.WillFlank, allow);
+    private void UpdateArea()
+    {
+        if (!steerRoaming)
+        {
+            if (blackboard.HasDirectorArea) blackboard.ClearDirectorArea();
+
+            hasArea = false;
+            return;
+        }
+
+        bool playerMoved = hasArea && FlatDistance(player.position, areaAnchor) > areaRefreshPlayerMoved;
+
+        if (hasArea && Time.time < nextAreaAt && !playerMoved)
+            return;
+
+        nextAreaAt = Time.time + areaRefreshSeconds;
+
+        if (!TryPickArea(out Vector3 center))
+            return;
+
+        areaAnchor = player.position;
+        hasArea = true;
+
+        blackboard.SetDirectorArea(
+            center,
+            areaRadius,
+            mode == DirectorMode.EaseOff ? DirectorIntent.EaseOff : DirectorIntent.Pressure);
+    }
+
+
+    /// <summary>
+    /// PRESSURE: a point on the NavMesh between minimumPullDistance and
+    /// pressureMaxDistance from the player. EASE OFF: the farthest of a
+    /// handful of samples, at least easeOffDistance away.
+    /// </summary>
+    private bool TryPickArea(out Vector3 center)
+    {
+        center = player.position;
+
+        bool away = mode == DirectorMode.EaseOff;
+
+        float best = float.NegativeInfinity;
+
+        bool found = false;
+
+        for (int i = 0; i < 16; i++)
+        {
+            float angle = Random.Range(0f, Mathf.PI * 2f);
+
+            float dist = away
+                ? Random.Range(easeOffDistance, easeOffDistance + 20f)
+                : Random.Range(minimumPullDistance, pressureMaxDistance);
+
+            Vector3 candidate = player.position + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * dist;
+
+            if (!NavMesh.SamplePosition(candidate, out NavMeshHit hit, 4f, NavMesh.AllAreas))
+                continue;
+
+            float d = FlatDistance(hit.position, player.position);
+
+            /* The guard: never centre the area on the player. */
+            if (d < minimumPullDistance)
+                continue;
+
+            float score = away
+                ? d
+                : -Mathf.Max(0f, d - pressureMaxDistance) + Random.value;
+
+            if (score > best)
+            {
+                best = score;
+                center = hit.position;
+                found = true;
+            }
+        }
+
+        return found;
+    }
+
+
+    // =========================================================
+    // CAUGHT (respawn mode only)
+    // =========================================================
+
+    /// <summary>
+    /// Called by PlayerDeathSequence when it respawns the player in
+    /// place instead of restarting the level.
+    /// </summary>
+    public void NotifyPlayerCaught()
+    {
+        if (!Acquire())
+            return;
+
+        menace = 0f;
+
+        EnterEaseOff(easeOffAfterCaught, "player caught");
+
+        Relocate();
+    }
+
+
+    /// <summary>Somewhere far from the player that the player cannot see. Farthest wins.</summary>
+    private void Relocate()
+    {
+        XenoLocomotion loco = creature.GetComponent<XenoLocomotion>();
+
+        if (loco == null)
+            return;
+
+        Vector3 eye = playerCamera != null ? playerCamera.transform.position : player.position + Vector3.up * 1.6f;
+
+        Vector3 best = creature.position;
+        float bestD = -1f;
+
+        Vector3 fallback = creature.position;
+        float fallbackD = -1f;
+
+        for (int i = 0; i < 80; i++)
+        {
+            Vector2 flat = Random.insideUnitCircle * 45f;
+
+            Vector3 candidate = player.position + new Vector3(flat.x, 0f, flat.y);
+
+            if (!NavMesh.SamplePosition(candidate, out NavMeshHit hit, 4f, NavMesh.AllAreas))
+                continue;
+
+            float d = FlatDistance(hit.position, player.position);
+
+            if (d > fallbackD)
+            {
+                fallbackD = d;
+                fallback = hit.position;
+            }
+
+            if (d < relocateMinimumDistance || d <= bestD)
+                continue;
+
+            if (!Physics.Linecast(eye, hit.position + Vector3.up * 1.2f, occlusionMask, QueryTriggerInteraction.Ignore))
+                continue;
+
+            best = hit.position;
+            bestD = d;
+        }
+
+        if (bestD < 0f)
+        {
+            if (fallbackD < 0f)
+                return;
+
+            best = fallback;
+            bestD = fallbackD;
+        }
+
+        loco.Stop();
+        loco.Warp(best);
+
+        Log("relocated the creature " + bestD.ToString("F0") + " m from the respawn, out of sight");
     }
 
 
@@ -457,19 +601,21 @@ public class XenoDirector : MonoBehaviour
     // API
     // =========================================================
 
+    /// <summary>Back to a calm start: empty gauge, PRESSURE.</summary>
     public void ResetPacing()
     {
-        gauge = 0f;
+        menace = 0f;
+        mode = DirectorMode.Pressure;
+        easeOffPending = false;
+        hasArea = false;
+    }
 
-        withdrawStartedAt = -1f;
 
-        if (blackboard != null)
-        {
-            blackboard.SetGaugeAmount(GaugeId.Retreat, 0f);
-
-            blackboard.SetWithdrawState(
-                WithdrawState.NotWithdrawing);
-        }
+    private static float FlatDistance(Vector3 a, Vector3 b)
+    {
+        a.y = 0f;
+        b.y = 0f;
+        return Vector3.Distance(a, b);
     }
 
 
@@ -478,19 +624,13 @@ public class XenoDirector : MonoBehaviour
         if (!logDecisions)
             return;
 
-        Debug.Log(
-            "[XenoDirector] " + what +
-            " - retreat " + gauge.ToString("F2"),
-            this
-        );
+        Debug.Log("[XenoDirector] " + what + " - menace " + menace.ToString("F2"), this);
     }
 
 
     /// <summary>For the debug overlay.</summary>
     public string Describe()
     {
-        return
-            "retreat " + gauge.ToString("F2") +
-            " / " + Withdraw;
+        return "menace " + menace.ToString("F2") + " / " + mode + (easeOffPending ? " (pending)" : "");
     }
 }

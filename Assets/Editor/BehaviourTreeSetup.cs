@@ -59,8 +59,8 @@ public static class BehaviourTreeSetup
 
         report.AppendLine("PORTED BRANCHES  (root selector order)");
         report.AppendLine("  SCRIPTED_WITHDRAWAL   y=2564 (inert -");
-        report.AppendLine("      XenoDirector.Request Withdrawals is");
-        report.AppendLine("      off, so nothing ever requests one)");
+        report.AppendLine("      XenoDirector never requests a");
+        report.AppendLine("      withdrawal; it eases off by area)");
         report.AppendLine("  THREAT_AWARE_BRANCH          y=3262");
         report.AppendLine("  ATTACK_CORE_BRANCH           y=3847");
         report.AppendLine("  SUSPECT_TARGET_RESPONSE      y=4162");

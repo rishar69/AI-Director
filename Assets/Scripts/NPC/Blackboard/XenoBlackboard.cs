@@ -536,6 +536,41 @@ public class XenoBlackboard : MonoBehaviour
 
 
     // =========================================================
+    // DIRECTOR AREA (designed tree's macro lever)
+    // =========================================================
+
+    /// <summary>
+    /// A coarse region the Director wants the creature to roam in. A
+    /// REGION, never a point: the Director keeps its centre a set
+    /// distance from the player and jitters it, so the creature still
+    /// has to find the player with its own senses once it gets there.
+    /// Only the ROAM branch reads it - the hunt, the chase and every
+    /// other branch ignore it entirely.
+    /// </summary>
+    public DirectorIntent DirectorIntent { get; private set; } = DirectorIntent.None;
+
+    public Vector3 DirectorAreaCenter { get; private set; }
+
+    public float DirectorAreaRadius { get; private set; }
+
+    public bool HasDirectorArea => DirectorIntent != DirectorIntent.None;
+
+
+    public void SetDirectorArea(Vector3 center, float radius, DirectorIntent intent)
+    {
+        DirectorAreaCenter = center;
+        DirectorAreaRadius = radius;
+        DirectorIntent = intent;
+    }
+
+
+    public void ClearDirectorArea()
+    {
+        DirectorIntent = DirectorIntent.None;
+    }
+
+
+    // =========================================================
     // RESET
     // =========================================================
 
@@ -563,5 +598,7 @@ public class XenoBlackboard : MonoBehaviour
         HasDoneSuspectResponseMoveTo = false;
 
         lastSuspectResponseMoveToTime = -999f;
+
+        DirectorIntent = DirectorIntent.None;
     }
 }

@@ -68,6 +68,13 @@ public class XenoAnimatorDriver : MonoBehaviour
     [SerializeField]
     private string walkTrigger = "Walk";
 
+    /// <summary>
+    /// Optional slow, stalking walk. Animators without it play the
+    /// normal walk at every non-running speed.
+    /// </summary>
+    [SerializeField]
+    private string prowlTrigger = "Prowl";
+
     [SerializeField]
     private string runTrigger = "Run";
 
@@ -106,6 +113,13 @@ public class XenoAnimatorDriver : MonoBehaviour
     [SerializeField, Min(0f)]
     private float runSpeedHysteresis = 0.6f;
 
+    /// <summary>
+    /// Ground speed below which the prowl clip is used. Sits between
+    /// the Prowl gait (1.2) and the Walk gait (2.4).
+    /// </summary>
+    [SerializeField, Min(0.1f)]
+    private float prowlSpeedThreshold = 1.8f;
+
 
     [Header("Clip Speed")]
     /*
@@ -121,6 +135,10 @@ public class XenoAnimatorDriver : MonoBehaviour
     /// <summary>Ground speed the Walking clip was authored at.</summary>
     [SerializeField, Min(0.1f)]
     private float walkClipReferenceSpeed = 1.5f;
+
+    /// <summary>Ground speed the prowl clip was authored at.</summary>
+    [SerializeField, Min(0.1f)]
+    private float prowlClipReferenceSpeed = 1.0f;
 
     /// <summary>Ground speed the Running clip was authored at.</summary>
     [SerializeField, Min(0.1f)]
@@ -140,6 +158,7 @@ public class XenoAnimatorDriver : MonoBehaviour
     private enum AnimState
     {
         Idle,
+        Prowling,
         Walking,
         Running,
         LookAround,
@@ -273,8 +292,22 @@ public class XenoAnimatorDriver : MonoBehaviour
                     ? runSpeedThreshold - runSpeedHysteresis
                     : runSpeedThreshold;
 
-            return locomotion.CurrentSpeed >= threshold
-                ? AnimState.Running
+            if (locomotion.CurrentSpeed >= threshold)
+                return AnimState.Running;
+
+            /*
+             * Same dead band idea for prowl/walk, and only when the
+             * animator actually has a prowl state to play.
+             */
+
+            float prowlBelow =
+                state == AnimState.Prowling
+                    ? prowlSpeedThreshold + 0.3f
+                    : prowlSpeedThreshold;
+
+            return HasParameter(prowlTrigger) &&
+                   locomotion.CurrentSpeed < prowlBelow
+                ? AnimState.Prowling
                 : AnimState.Walking;
         }
 
@@ -318,6 +351,10 @@ public class XenoAnimatorDriver : MonoBehaviour
         {
             case AnimState.Running:
                 FireTrigger(runTrigger);
+                break;
+
+            case AnimState.Prowling:
+                FireTrigger(prowlTrigger);
                 break;
 
             case AnimState.Walking:
@@ -370,6 +407,8 @@ public class XenoAnimatorDriver : MonoBehaviour
         ResetTrigger(idleTrigger);
 
         ResetTrigger(walkTrigger);
+
+        ResetTrigger(prowlTrigger);
 
         ResetTrigger(runTrigger);
 
@@ -447,6 +486,7 @@ public class XenoAnimatorDriver : MonoBehaviour
          */
 
         bool locomoting =
+            state == AnimState.Prowling ||
             state == AnimState.Walking ||
             state == AnimState.Running;
 
@@ -464,9 +504,9 @@ public class XenoAnimatorDriver : MonoBehaviour
          */
 
         float reference =
-            state == AnimState.Running
-                ? runClipReferenceSpeed
-                : walkClipReferenceSpeed;
+            state == AnimState.Running ? runClipReferenceSpeed :
+            state == AnimState.Prowling ? prowlClipReferenceSpeed :
+            walkClipReferenceSpeed;
 
         animator.speed =
             Mathf.Clamp(

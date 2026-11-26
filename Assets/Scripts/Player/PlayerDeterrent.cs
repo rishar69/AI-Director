@@ -22,8 +22,9 @@ public class PlayerDeterrent : MonoBehaviour
     // =========================================================
 
     [Header("Input")]
+    /// <summary>Q, not F: F is the flashlight, and sharing it fired the flash every time the torch was toggled.</summary>
     [SerializeField]
-    private Key fireKey = Key.F;
+    private Key fireKey = Key.Q;
 
 
     [Header("Cone")]

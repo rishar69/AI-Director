@@ -76,10 +76,37 @@ public class XenoSuspiciousItems : MonoBehaviour
         stage != SuspiciousItemStage.Finished;
 
 
+    /// <summary>
+    /// The priority the TREE sees: the item's own, lowered by Demotion.
+    /// Learning raises Demotion once decoys keep leading nowhere, which
+    /// moves a thrown noisemaker below the hunt in the root selector -
+    /// the creature stops dropping everything for it.
+    /// </summary>
     public SuspiciousItemPriority Priority =>
         current != null
-            ? current.Priority
+            ? Demote(current.Priority, Demotion)
             : SuspiciousItemPriority.Low;
+
+    /// <summary>The item's own priority, before any learned demotion.</summary>
+    public SuspiciousItemPriority RawPriority =>
+        current != null ? current.Priority : SuspiciousItemPriority.Low;
+
+    /// <summary>How many levels to lower HIGH items by. Written by XenoLearning.</summary>
+    public int Demotion { get; set; }
+
+    public float AcquiredAt => acquiredAt;
+
+    /// <summary>Raised when an item is let go: its raw priority, when it was taken on, and whether it was worked to the end.</summary>
+    public event System.Action<SuspiciousItemPriority, float, bool> OnItemReleased;
+
+
+    private static SuspiciousItemPriority Demote(SuspiciousItemPriority p, int levels)
+    {
+        if (p != SuspiciousItemPriority.High || levels <= 0)
+            return p;
+
+        return levels == 1 ? SuspiciousItemPriority.Medium : SuspiciousItemPriority.Low;
+    }
 
 
     public Vector3 Position =>
@@ -115,6 +142,8 @@ public class XenoSuspiciousItems : MonoBehaviour
              * re-attract it, which is the loop that would otherwise
              * pin it in place next to an unreachable object.
              */
+
+            OnItemReleased?.Invoke(current.Priority, acquiredAt, false);
 
             current.MarkConsumed();
 
@@ -184,6 +213,8 @@ public class XenoSuspiciousItems : MonoBehaviour
 
         if (stage == SuspiciousItemStage.Finished)
         {
+            OnItemReleased?.Invoke(current.Priority, acquiredAt, true);
+
             current.MarkConsumed();
 
             Clear();

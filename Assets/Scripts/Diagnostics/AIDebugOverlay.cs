@@ -466,9 +466,7 @@ public class AIDebugOverlay : MonoBehaviour
             Line(
                 "hiding",
                 hiding.IsHiding
-                    ? (hiding.IsPeeking
-                        ? "<color=#FF9436>PEEKING</color>"
-                        : "<color=#8FD98F>hidden</color>")
+                    ? "<color=#8FD98F>hidden</color>"
                     : "exposed"
             );
 

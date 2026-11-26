@@ -200,3 +200,21 @@ public enum WithdrawState
     NeedsToWithdraw = 1,
     Withdrawing = 2
 }
+
+
+/// <summary>
+/// Why the Director has set an area of interest. Written by the
+/// Director, read by the ROAM branch. Not part of the CATHODE export:
+/// this is the designed tree's macro-AI lever.
+/// </summary>
+public enum DirectorIntent
+{
+    /// <summary>No area: the creature roams wherever it has not looked.</summary>
+    None = 0,
+
+    /// <summary>PRESSURE: wander the player's general area, never right on top of them.</summary>
+    Pressure = 1,
+
+    /// <summary>EASE OFF: wander far from the player, to give them room to breathe.</summary>
+    EaseOff = 2
+}

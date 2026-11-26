@@ -48,6 +48,32 @@ public class VisionSense : Sense
     private float minimumStrength = 0.05f;
 
 
+    [Header("Flashlight Beam")]
+    /*
+     * A lit torch is the brightest thing in a night museum. Two ways to
+     * catch it, both from the caretaker's own eyes and line of sight:
+     * the lens itself pointed his way (glare - seen from much further
+     * than a body), and the pool of light it throws on a wall or floor
+     * (he sees the spot and reads roughly where it comes from). Turning
+     * the torch off removes both - that is the player's trade-off.
+     */
+
+    [SerializeField]
+    private bool seesFlashlights = true;
+
+    /// <summary>How much further than a body the glare of a lens reaches.</summary>
+    [SerializeField, Min(1f)]
+    private float glareRangeMultiplier = 1.6f;
+
+    /// <summary>Strength of looking straight into the lens at close range.</summary>
+    [SerializeField, Range(0f, 1f)]
+    private float glareStrength = 0.9f;
+
+    /// <summary>Strength of seeing the lit spot at close range - creeps awareness up.</summary>
+    [SerializeField, Range(0f, 1f)]
+    private float spotStrength = 0.35f;
+
+
     [Header("Query")]
     [SerializeField, Min(1)]
     private int maxTargets = 16;
@@ -74,6 +100,18 @@ public class VisionSense : Sense
     public float Range => range;
 
     public float Angle => angle;
+
+    /// <summary>Strongest sighting of a body in the last poll (VISUAL).</summary>
+    public float LastBodyStrength { get; private set; }
+
+    /// <summary>Strongest sighting of a torch beam in the last poll (SEE_FLASH_LIGHT).</summary>
+    public float LastBeamStrength { get; private set; }
+
+    public bool SeesFlashlights
+    {
+        get => seesFlashlights;
+        set => seesFlashlights = value;
+    }
 
     public void SetRange(float value)
     {
@@ -157,6 +195,27 @@ public class VisionSense : Sense
                 bestStrength = strength;
 
                 bestPoint = point;
+            }
+        }
+
+        LastBodyStrength = bestStrength >= minimumStrength ? bestStrength : 0f;
+
+        LastBeamStrength = 0f;
+
+        if (seesFlashlights)
+        {
+            float beamStrength = EvaluateBeams(eye, out Vector3 beamPoint);
+
+            if (beamStrength >= minimumStrength)
+            {
+                LastBeamStrength = beamStrength;
+            }
+
+            if (beamStrength > bestStrength)
+            {
+                bestStrength = beamStrength;
+
+                bestPoint = beamPoint;
             }
         }
 
@@ -250,6 +309,96 @@ public class VisionSense : Sense
                 best = strength;
 
                 bestPoint = point;
+            }
+        }
+
+        return best;
+    }
+
+
+    // =========================================================
+    // FLASHLIGHT BEAMS
+    // =========================================================
+
+    /// <summary>
+    /// The strongest sighting of any lit flashlight. The reported point
+    /// is the lens - what a man following a beam back would walk to.
+    /// </summary>
+    private float EvaluateBeams(Vector3 eye, out Vector3 bestPoint)
+    {
+        bestPoint = Vector3.zero;
+
+        float best = 0f;
+
+        float halfAngle = angle * 0.5f;
+
+        foreach (Flashlight torch in Flashlight.Lit)
+        {
+            if (torch == null || !torch.IsBeaming)
+                continue;
+
+            Vector3 lens = torch.BeamOrigin;
+
+            Vector3 beamDir = torch.BeamDirection;
+
+            /* 1. Glare: the lens is in his view and points at him. */
+
+            Vector3 toLens = lens - eye;
+
+            float lensDistance = toLens.magnitude;
+
+            float glareRange = range * glareRangeMultiplier;
+
+            if (lensDistance <= glareRange &&
+                Vector3.Angle(SensorForward, toLens) <= halfAngle &&
+                Vector3.Angle(beamDir, -toLens) <= torch.BeamAngle * 0.5f &&
+                !IsOccluded(eye, lens))
+            {
+                float s = glareStrength *
+                          distanceFalloff.Evaluate(Mathf.Clamp01(lensDistance / glareRange));
+
+                if (s > best)
+                {
+                    best = s;
+
+                    bestPoint = lens;
+                }
+            }
+
+            /* 2. The pool of light where the beam lands. */
+
+            if (Physics.Raycast(lens, beamDir, out RaycastHit hit, torch.BeamRange,
+                    obstacleMask, QueryTriggerInteraction.Ignore))
+            {
+                Vector3 spot = hit.point + hit.normal * 0.05f;
+
+                Vector3 toSpot = spot - eye;
+
+                float spotDistance = toSpot.magnitude;
+
+                float spotAngle = Vector3.Angle(SensorForward, toSpot);
+
+                if (spotDistance <= range &&
+                    spotAngle <= halfAngle &&
+                    !IsOccluded(eye, spot))
+                {
+                    /* Light falls off with throw: a far wall shows a dim spot. */
+
+                    float throwTerm = 1f - Mathf.Clamp01(hit.distance / torch.BeamRange) * 0.6f;
+
+                    float s = spotStrength * throwTerm *
+                              distanceFalloff.Evaluate(Mathf.Clamp01(spotDistance / range)) *
+                              (halfAngle > 0.01f
+                                  ? peripheralFalloff.Evaluate(Mathf.Clamp01(spotAngle / halfAngle))
+                                  : 1f);
+
+                    if (s > best)
+                    {
+                        best = s;
+
+                        bestPoint = lens;
+                    }
+                }
             }
         }
 

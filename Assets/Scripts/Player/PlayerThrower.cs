@@ -161,18 +161,93 @@ public class PlayerThrower : MonoBehaviour
     /// A small sphere with the right components on it, so the mechanic
     /// works before any art exists.
     /// </summary>
+    private static Mesh pebbleMesh;
+
+    private static Material pebbleMaterial;
+
+    private static Material trailMaterial;
+
+    /// <summary>
+    /// A small grey stone, made in code: a sphere pushed in and out by a
+    /// smooth noise so it reads as a rock, not a ball. It leaves a faint
+    /// trail so the throw can be followed in the dark.
+    /// </summary>
     private static Noisemaker BuildPlaceholder()
     {
-        GameObject obj =
-            GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        GameObject obj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
 
-        obj.name = "Noisemaker (placeholder)";
+        obj.name = "Pebble";
 
-        obj.transform.localScale = Vector3.one * 0.18f;
+        if (pebbleMesh == null)
+        {
+            Mesh source = obj.GetComponent<MeshFilter>().sharedMesh;
+
+            pebbleMesh = Object.Instantiate(source);
+
+            Vector3[] v = pebbleMesh.vertices;
+
+            for (int i = 0; i < v.Length; i++)
+            {
+                Vector3 d = v[i].normalized;
+
+                float bump =
+                    0.18f * Mathf.Sin(d.x * 5.1f + 1.3f) * Mathf.Cos(d.y * 4.3f) +
+                    0.12f * Mathf.Sin(d.z * 7.7f + d.x * 2.1f) +
+                    0.08f * Mathf.Cos(d.y * 9.4f + 0.7f);
+
+                v[i] = Vector3.Scale(d * 0.5f * (1f + bump), new Vector3(1.15f, 0.8f, 1f));
+            }
+
+            pebbleMesh.vertices = v;
+            pebbleMesh.RecalculateNormals();
+            pebbleMesh.RecalculateBounds();
+        }
+
+        obj.GetComponent<MeshFilter>().sharedMesh = pebbleMesh;
+
+        if (pebbleMaterial == null)
+        {
+            Shader lit = Shader.Find("Universal Render Pipeline/Lit");
+
+            pebbleMaterial = new Material(lit != null ? lit : Shader.Find("Standard"));
+            pebbleMaterial.color = new Color(0.62f, 0.60f, 0.55f);
+
+            if (pebbleMaterial.HasProperty("_Smoothness"))
+            {
+                pebbleMaterial.SetFloat("_Smoothness", 0.25f);
+            }
+
+            /* A faint glint, so it can be followed in a dark room. */
+            if (pebbleMaterial.HasProperty("_EmissionColor"))
+            {
+                pebbleMaterial.EnableKeyword("_EMISSION");
+                pebbleMaterial.SetColor("_EmissionColor", new Color(0.16f, 0.155f, 0.14f));
+            }
+        }
+
+        obj.GetComponent<MeshRenderer>().sharedMaterial = pebbleMaterial;
+
+        obj.transform.localScale = Vector3.one * 0.14f;
+
+        TrailRenderer trail = obj.AddComponent<TrailRenderer>();
+
+        if (trailMaterial == null)
+        {
+            trailMaterial = new Material(Shader.Find("Sprites/Default"));
+        }
+
+        trail.sharedMaterial = trailMaterial;
+        trail.time = 0.5f;
+        trail.startWidth = 0.05f;
+        trail.endWidth = 0f;
+        trail.startColor = new Color(1f, 0.97f, 0.9f, 0.6f);
+        trail.endColor = new Color(1f, 0.97f, 0.9f, 0f);
+        trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
 
         Rigidbody body = obj.AddComponent<Rigidbody>();
 
         body.mass = 0.4f;
+        body.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
 
         return obj.AddComponent<Noisemaker>();
     }

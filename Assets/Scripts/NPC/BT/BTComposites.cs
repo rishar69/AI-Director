@@ -39,6 +39,8 @@ public abstract class BTComposite : BTNode
 
     public IReadOnlyList<BTNode> Children => children;
 
+    public override IReadOnlyList<BTNode> TraceChildren => children;
+
 
     protected override void OnAbort(
         BTContext context,

@@ -527,6 +527,23 @@ public class PerceptionSystem : MonoBehaviour
     /// Lets the alien discard a search location it has already checked
     /// without wiping how alert it is.
     /// </summary>
+    public void NoteContact(Vector3 position)
+    {
+        /*
+         * A contact the creature made itself rather than through a
+         * Sense poll - looking under a desk and finding someone there.
+         * Treated exactly like a sighting at that spot.
+         */
+        awareness = Mathf.Max(awareness, alertedEnter);
+
+        timeSinceContact = 0f;
+
+        SetLastKnownPosition(position);
+
+        UpdateLevel();
+    }
+
+
     public void ForgetLastKnownPosition()
     {
         hasLastKnownPosition = false;

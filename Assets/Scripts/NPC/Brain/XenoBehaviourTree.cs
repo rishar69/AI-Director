@@ -19,11 +19,29 @@ using UnityEngine;
 [RequireComponent(typeof(XenoBlackboard))]
 [RequireComponent(typeof(XenoLocomotion))]
 [RequireComponent(typeof(PerceptionSystem))]
-public class XenoBehaviourTree : MonoBehaviour
+public partial class XenoBehaviourTree : MonoBehaviour
 {
     // =========================================================
     // INSPECTOR
     // =========================================================
+
+    /// <summary>
+    /// Which tree to run. DESIGNED is our own tree: a smaller root with
+    /// every branch implemented and a real hunt loop. CATHODE_PORT is the
+    /// 1:1 port of MainBehave, kept for comparison and for the thesis.
+    /// </summary>
+    public enum TreeDesign
+    {
+        Designed = 0,
+        CathodePort = 1
+    }
+
+    [Header("Tree")]
+    [SerializeField]
+    private TreeDesign treeDesign = TreeDesign.Designed;
+
+    public TreeDesign Design => treeDesign;
+
 
     [Header("Stalk Role")]
     [SerializeField, Min(1f)]
@@ -220,6 +238,8 @@ public class XenoBehaviourTree : MonoBehaviour
 
     private BTContext context;
 
+    private XenoHuntMemory huntMemory;
+
     private BTSelector root;
 
     private string lastTraceTop;
@@ -228,6 +248,14 @@ public class XenoBehaviourTree : MonoBehaviour
 
 
     public BTNode Root => root;
+
+    /// <summary>
+    /// Stamp of the latest tick; nodes whose LastTickStamp matches were
+    /// visited on it. Read by the live tree viewer.
+    /// </summary>
+    public int TraceStamp { get; private set; }
+
+    public BTContext Context => context;
 
     public XenoBlackboard Blackboard => blackboard;
 
@@ -285,7 +313,16 @@ public class XenoBehaviourTree : MonoBehaviour
             eventLog = gameObject.AddComponent<XenoEventLog>();
         }
 
-        DisableLegacyBrain();
+        /*
+         * Only when this tree is the one in charge. Unity calls Awake on a
+         * DISABLED component too, so without this check switching the tree
+         * off to run the FSM comparison version would still switch the FSM
+         * off, leaving the NPC with no brain at all.
+         */
+        if (enabled)
+        {
+            DisableLegacyBrain();
+        }
 
         context =
             new BTContext(
@@ -300,6 +337,24 @@ public class XenoBehaviourTree : MonoBehaviour
         context.SuspiciousItems = suspiciousItems;
 
         context.Events = eventLog;
+
+        huntMemory = GetComponent<XenoHuntMemory>();
+
+        if (huntMemory == null)
+        {
+            huntMemory = gameObject.AddComponent<XenoHuntMemory>();
+        }
+
+        context.Hunt = huntMemory;
+
+        XenoLearning learning = GetComponent<XenoLearning>();
+
+        if (learning == null)
+        {
+            learning = gameObject.AddComponent<XenoLearning>();
+        }
+
+        context.Learning = learning;
 
         root = BuildRoot();
     }
@@ -334,6 +389,8 @@ public class XenoBehaviourTree : MonoBehaviour
 
         blackboard.BeginTick();
 
+        TraceStamp = BTNode.BeginTraceTick();
+
         root.Tick(context);
 
         ReportBranch();
@@ -352,6 +409,14 @@ public class XenoBehaviourTree : MonoBehaviour
     /// safe because a stub fails and the selector moves on.
     /// </summary>
     private BTSelector BuildRoot()
+    {
+        return treeDesign == TreeDesign.Designed
+            ? BuildDesignedRoot()
+            : BuildPortRoot();
+    }
+
+
+    private BTSelector BuildPortRoot()
     {
         BTSelector selector = new BTSelector("SEL_1");
 

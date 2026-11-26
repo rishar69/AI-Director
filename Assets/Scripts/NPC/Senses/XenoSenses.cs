@@ -178,9 +178,23 @@ public class XenoSenses : MonoBehaviour
         {
             SenseReading reading = vision.LastReading;
 
+            /*
+             * One eye, two CATHODE channels: a body seen is VISUAL, a
+             * torch beam seen (its glare or its pool of light) is
+             * SEE_FLASH_LIGHT, which the tree weighs separately.
+             */
+
             if (reading.HasContact)
             {
-                AddContinuous(SenseChannelId.Visual, reading.Strength);
+                if (vision.LastBodyStrength > 0f)
+                {
+                    AddContinuous(SenseChannelId.Visual, vision.LastBodyStrength);
+                }
+
+                if (vision.LastBeamStrength > 0f)
+                {
+                    AddContinuous(SenseChannelId.SeeFlashLight, vision.LastBeamStrength);
+                }
             }
         }
 
@@ -448,6 +462,18 @@ public class XenoSenses : MonoBehaviour
     // =========================================================
     // QUERIES
     // =========================================================
+
+    public float LowerThreshold => lowerThreshold;
+
+    public float ActivatedThreshold => activatedThreshold;
+
+    public float UpperThreshold => upperThreshold;
+
+    /// <summary>Where the last search stamp was taken, if any. Debug view only.</summary>
+    public bool HasLastSearchPosition => hasSearchPosition;
+
+    public Vector3 LastSearchPosition => lastSearchPosition;
+
 
     public float GetActivation(SenseChannelId channel)
     {

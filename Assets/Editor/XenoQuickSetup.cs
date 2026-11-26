@@ -552,6 +552,7 @@ public static class XenoQuickSetup
         Ensure<PlayerDeterrent>(player);
         Ensure<MotionTracker>(player);
         Ensure<PlayerDeathSequence>(player);
+        Ensure<PlayerAudio>(player);
 
         /* The Phase 3 stand-in double-kills alongside the real one. */
 

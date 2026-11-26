@@ -63,11 +63,17 @@ public class MotionTracker : MonoBehaviour
     [SerializeField]
     private bool showDisplay = true;
 
+    /// <summary>Size at a 1920 x 1080 reference; scaled like the HUD canvas.</summary>
     [SerializeField, Min(40f)]
-    private float displaySize = 150f;
+    private float displaySize = 200f;
 
+    /// <summary>
+    /// Bottom-right placement in reference pixels. It sits directly
+    /// above the HUD's tool box (40 px from the right, 36 + 214 px
+    /// from the bottom) so the two never overlap.
+    /// </summary>
     [SerializeField]
-    private Vector2 displayMargin = new Vector2(18f, 18f);
+    private Vector2 displayOffset = new Vector2(40f, 264f);
 
 
     // =========================================================
@@ -221,21 +227,30 @@ public class MotionTracker : MonoBehaviour
         if (!IsActive || !showDisplay)
             return;
 
+        /* The HUD's full-screen cards (warning, caught, escape) freeze time; stay out of them. */
+        if (Time.timeScale == 0f)
+            return;
+
         EnsurePixel();
+
+        /* Same scaling as the HUD's CanvasScaler (1920 x 1080, match 0.5). */
+        float s = Mathf.Sqrt((Screen.width / 1920f) * (Screen.height / 1080f));
+
+        float size = displaySize * s;
 
         Rect area =
             new Rect(
-                Screen.width - displaySize - displayMargin.x,
-                Screen.height - displaySize - displayMargin.y,
-                displaySize,
-                displaySize
+                Screen.width - displayOffset.x * s - size,
+                Screen.height - displayOffset.y * s - size,
+                size,
+                size
             );
 
         DrawBackground(area);
 
         Vector2 centre = area.center;
 
-        float radius = displaySize * 0.5f - 8f;
+        float radius = size * 0.5f - 8f * s;
 
         DrawSweep(centre, radius);
 
@@ -258,12 +273,19 @@ public class MotionTracker : MonoBehaviour
 
     private void DrawBackground(Rect area)
     {
-        GUI.color = new Color(0f, 0.05f, 0.02f, 0.75f);
+        /* The HUD's box style: near-black fill, thin light border. */
+        GUI.color = new Color(0.025f, 0.03f, 0.028f, 0.84f);
 
         GUI.DrawTexture(area, pixel);
 
-        GUI.color = new Color(0.3f, 1f, 0.5f, 0.35f);
+        GUI.color = new Color(0.86f, 0.84f, 0.78f, 0.55f);
 
+        GUI.DrawTexture(new Rect(area.x, area.y, area.width, 1f), pixel);
+        GUI.DrawTexture(new Rect(area.x, area.yMax - 1f, area.width, 1f), pixel);
+        GUI.DrawTexture(new Rect(area.x, area.y, 1f, area.height), pixel);
+        GUI.DrawTexture(new Rect(area.xMax - 1f, area.y, 1f, area.height), pixel);
+
+        /* You are the centre. */
         DrawBox(area.center, 3f);
 
         GUI.color = Color.white;
@@ -282,7 +304,7 @@ public class MotionTracker : MonoBehaviour
 
         float fade = Mathf.Clamp01(1f - age / pingInterval);
 
-        GUI.color = new Color(0.3f, 1f, 0.5f, 0.10f + fade * 0.25f);
+        GUI.color = new Color(0.86f, 0.84f, 0.78f, 0.05f + fade * 0.15f);
 
         GUI.DrawTexture(
             new Rect(

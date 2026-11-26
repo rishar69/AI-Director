@@ -6,8 +6,17 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Scenes/Museum.unity
+    guid: 504e4b5de42626c4c9fd890baf33eba6
+  - enabled: 1
     path: Assets/Scenes/SampleScene.unity
     guid: 99c9720ab356a0642a771bea13969a05
+  - enabled: 1
+    path: Assets/Scenes/HidingTest.unity
+    guid: 708b85beb09fb084babf0159b303fe71
+  - enabled: 1
+    path: Assets/Scenes/AIObservatory.unity
+    guid: 001fb054b3ac66d4cb598962dffcecf8
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0

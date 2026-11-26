@@ -88,6 +88,14 @@ public class HearingSense : Sense
 
     public float LastHeardStrength => lastHeardStrength;
 
+    /// <summary>
+    /// How much a decoy's sound still counts as evidence of the target.
+    /// Lowered by XenoLearning once decoys keep leading nowhere: the
+    /// creature has learned what that sound is, and stops treating it
+    /// as a sighting of you.
+    /// </summary>
+    public float DistractionScale { get; set; } = 1f;
+
     public Vector3 LastHeardPosition => lastHeardPosition;
 
     /// <summary>
@@ -137,6 +145,11 @@ public class HearingSense : Sense
             return;
 
         strength *= WeightFor(noise.Type) * sensitivity;
+
+        if (noise.Type == NoiseType.Distraction)
+        {
+            strength *= DistractionScale;
+        }
 
         if (muffleThroughWalls &&
             IsOccluded(SensorPosition, noise.Position))

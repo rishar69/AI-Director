@@ -46,6 +46,16 @@ public class PlayerDeathSequence : MonoBehaviour
     private float blackHoldDuration = 0.6f;
 
 
+    [Header("Restart")]
+    /// <summary>
+    /// Being caught restarts the whole level: the museum reloads and the
+    /// night begins again. Off, the older behaviour applies - wake in the
+    /// lobby with keys and clocks kept.
+    /// </summary>
+    [SerializeField]
+    private bool restartLevelOnDeath = true;
+
+
     [Header("Respawn")]
     [SerializeField]
     private bool respawnAtStart = true;
@@ -159,7 +169,13 @@ public class PlayerDeathSequence : MonoBehaviour
         XenoBehaviourTree foundTree =
             FindFirstObjectByType<XenoBehaviourTree>();
 
-        if (foundTree != null)
+        /*
+         * Only an ENABLED tree. In the FSM comparison version the tree
+         * component is present but switched off, and subscribing to it
+         * meant the FSM's strikes were never heard - the player could
+         * not die.
+         */
+        if (foundTree != null && foundTree.enabled)
         {
             tree = foundTree;
 
@@ -277,6 +293,18 @@ public class PlayerDeathSequence : MonoBehaviour
         yield return new WaitForSeconds(holdDuration);
 
         yield return Fade(0f, 1f, fadeOutDuration);
+
+        if (restartLevelOnDeath)
+        {
+            /* What the NPC learned about this player carries into the next attempt. */
+            XenoLearning.CarryOver();
+
+            GameSession.NoteCaught(ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Elapsed : 0f);
+
+            GameSession.ReloadLevel();
+
+            yield break;
+        }
 
         Respawn();
 
@@ -441,6 +469,14 @@ public class PlayerDeathSequence : MonoBehaviour
                     TimerId.AttackBan
                 );
             }
+
+            /*
+             * The designed tree's Director. Without this it never heard
+             * about a death, the creature stayed beside the respawn
+             * point, saw the player the moment they reappeared, and
+             * killed them again as soon as the attack ban ran out.
+             */
+            FindFirstObjectByType<XenoDirector>()?.NotifyPlayerCaught();
         }
 
         if (brain == null)

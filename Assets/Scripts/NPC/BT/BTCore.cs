@@ -74,6 +74,15 @@ public class BTContext
     /// </summary>
     public XenoEventLog Events { get; set; }
 
+    /// <summary>
+    /// Trail, checked hiding spots and map coverage for the designed
+    /// tree's hunt and roam branches. May be null on the ported tree.
+    /// </summary>
+    public XenoHuntMemory Hunt { get; set; }
+
+    /// <summary>What the creature has learned about this player. May be null.</summary>
+    public XenoLearning Learning { get; set; }
+
     public float DeltaTime => Time.deltaTime;
 
     /// <summary>
@@ -114,6 +123,45 @@ public abstract class BTNode
     public bool IsRunning => LastStatus == BTStatus.Running;
 
 
+    // ---------------------------------------------------------
+    // TRACING (read by the live tree viewer, never by behaviour)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Global tick counter. A tree calls BeginTraceTick() before it
+    /// ticks its root and keeps the returned stamp; any node whose
+    /// LastTickStamp equals that stamp was visited on the tree's
+    /// latest tick. Nodes the selector never reached keep an old
+    /// stamp, which is how the viewer tells "ran and failed" apart
+    /// from "not evaluated at all".
+    /// </summary>
+    private static int traceCounter;
+
+    public static int BeginTraceTick()
+    {
+        return ++traceCounter;
+    }
+
+    public int LastTickStamp { get; private set; }
+
+    /// <summary>Time.time of the last tick that visited this node.</summary>
+    public float LastTickTime { get; private set; }
+
+    /// <summary>Time.time this node last went from not-running to Running.</summary>
+    public float RunningSince { get; private set; }
+
+    /// <summary>Stamp of the last tick on which this node was aborted.</summary>
+    public int AbortedStamp { get; private set; }
+
+    private static readonly BTNode[] NoChildren = new BTNode[0];
+
+    /// <summary>
+    /// Structural children, for the viewer. Behaviour never walks the
+    /// tree through this.
+    /// </summary>
+    public virtual System.Collections.Generic.IReadOnlyList<BTNode> TraceChildren => NoChildren;
+
+
     protected BTNode(string name)
     {
         Name = name;
@@ -122,7 +170,18 @@ public abstract class BTNode
 
     public BTStatus Tick(BTContext context)
     {
+        bool wasRunning = LastStatus == BTStatus.Running;
+
         LastStatus = OnTick(context);
+
+        LastTickStamp = traceCounter;
+
+        LastTickTime = Time.time;
+
+        if (LastStatus == BTStatus.Running && !wasRunning)
+        {
+            RunningSince = Time.time;
+        }
 
         return LastStatus;
     }
@@ -144,6 +203,8 @@ public abstract class BTNode
         OnAbort(context, urgency);
 
         LastStatus = BTStatus.Failure;
+
+        AbortedStamp = traceCounter;
     }
 
 

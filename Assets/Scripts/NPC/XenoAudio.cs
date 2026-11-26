@@ -5,14 +5,20 @@ using UnityEngine;
 ///
 /// Audio is most of the fear in this genre. The creature is off screen
 /// the overwhelming majority of the time, so for long stretches the
-/// sound IS the AI as far as the player is concerned - footfalls
-/// somewhere above, a duct clanging two rooms away, the hiss that tells
-/// you the stalking is over.
+/// sound IS the AI as far as the player is concerned - steps somewhere
+/// above, a growl through a wall, the scream that says the hunt is on.
 ///
-/// Every clip field is optional and the component is silent with none
-/// assigned. The project currently ships no audio, so this is the
-/// plumbing waiting for it - identical in spirit to how
-/// XenoAnimatorDriver waited for a mesh.
+/// Every cue follows what the creature knows, read from its
+/// PerceptionSystem, never from the player:
+///
+///   Unaware     a faint growl close up; a distant roar now and then
+///   Suspicious  sniffing, growl louder
+///   Alerted     growl louder still, sniffing whenever it stops
+///   Confirmed   the scream - it has you - and the growl at full
+///   Attack      the shriek
+///
+/// Clips come from GameSound by name. Any that are missing are simply
+/// skipped.
 /// </summary>
 [RequireComponent(typeof(XenoLocomotion))]
 public class XenoAudio : MonoBehaviour
@@ -26,54 +32,77 @@ public class XenoAudio : MonoBehaviour
     private AudioSource source;
 
     /// <summary>
-    /// Fully 3D by default. A creature you cannot locate by ear is a
-    /// creature the player cannot play around.
+    /// How far its vocals carry. A creature you cannot locate by ear is
+    /// a creature the player cannot play around.
     /// </summary>
-    [SerializeField, Range(0f, 1f)]
-    private float spatialBlend = 1f;
-
     [SerializeField, Min(1f)]
     private float maxDistance = 45f;
 
 
     [Header("Footsteps")]
+    /// <summary>
+    /// Optional dedicated creature steps. Empty uses the player's steps
+    /// pitched down and heavier - a stand-in until creature steps exist.
+    /// </summary>
     [SerializeField]
     private AudioClip[] footsteps;
 
-    /// <summary>Metres between footfalls at a walk.</summary>
+    [SerializeField, Range(0.3f, 1.5f)]
+    private float standInPitch = 0.62f;
+
+    /// <summary>Metres between footfalls upright.</summary>
     [SerializeField, Min(0.1f)]
-    private float strideLength = 1.6f;
+    private float walkStride = 1.5f;
+
+    /// <summary>Metres between footfalls on all fours - a gallop beats faster.</summary>
+    [SerializeField, Min(0.1f)]
+    private float runStride = 1.0f;
+
+    /// <summary>Speed at which it counts as running on all fours.</summary>
+    [SerializeField, Min(0.1f)]
+    private float runSpeed = 3.5f;
 
     [SerializeField, Range(0f, 1f)]
-    private float footstepVolume = 0.7f;
-
-
-    [Header("Vocalisations")]
-    [SerializeField]
-    private AudioClip[] idleVocals;
-
-    [SerializeField]
-    private AudioClip[] stalkVocals;
-
-    [SerializeField]
-    private AudioClip[] chaseVocals;
-
-    [SerializeField]
-    private AudioClip[] attackVocals;
+    private float footstepVolume = 0.75f;
 
     [SerializeField, Min(1f)]
-    private float idleVocalIntervalMin = 12f;
-
-    [SerializeField, Min(1f)]
-    private float idleVocalIntervalMax = 30f;
+    private float footstepDistance = 28f;
 
 
-    [Header("Vents")]
-    [SerializeField]
-    private AudioClip[] ventClanks;
+    [Header("Growl (looping, close range)")]
+    [SerializeField, Range(0f, 1f)]
+    private float growlUnaware = 0.15f;
 
     [SerializeField, Range(0f, 1f)]
-    private float ventVolume = 0.9f;
+    private float growlSuspicious = 0.45f;
+
+    [SerializeField, Range(0f, 1f)]
+    private float growlAlerted = 0.7f;
+
+    [SerializeField, Range(0f, 1f)]
+    private float growlConfirmed = 0.95f;
+
+    /// <summary>Close range on purpose: the growl means "it is near".</summary>
+    [SerializeField, Min(1f)]
+    private float growlDistance = 16f;
+
+
+    [Header("Vocals")]
+    [SerializeField, Min(1f)]
+    private float roarIntervalMin = 40f;
+
+    [SerializeField, Min(1f)]
+    private float roarIntervalMax = 80f;
+
+    [SerializeField, Min(1f)]
+    private float sniffIntervalMin = 7f;
+
+    [SerializeField, Min(1f)]
+    private float sniffIntervalMax = 12f;
+
+    /// <summary>Stops a flickering lock-on from screaming twice.</summary>
+    [SerializeField, Min(0f)]
+    private float screamCooldown = 12f;
 
 
     // =========================================================
@@ -82,13 +111,25 @@ public class XenoAudio : MonoBehaviour
 
     private XenoLocomotion locomotion;
 
-    private XenoBrain brain;
+    private PerceptionSystem perception;
+
+    private XenoBehaviourTree tree;
+
+    private AudioSource growl;
 
     private Vector3 lastPosition;
 
     private float distanceSinceStep;
 
-    private float nextIdleVocalTime;
+    private float nextRoar;
+
+    private float nextSniff;
+
+    private float lastScream = -999f;
+
+
+    private AwarenessLevel Level =>
+        perception != null ? perception.Level : AwarenessLevel.Unaware;
 
 
     // =========================================================
@@ -99,54 +140,10 @@ public class XenoAudio : MonoBehaviour
     {
         locomotion = GetComponent<XenoLocomotion>();
 
-        brain = GetComponent<XenoBrain>();
+        perception = GetComponent<PerceptionSystem>();
 
-        EnsureSource();
+        tree = GetComponent<XenoBehaviourTree>();
 
-        lastPosition = transform.position;
-
-        ScheduleIdleVocal();
-    }
-
-
-    private void OnEnable()
-    {
-        if (brain != null)
-        {
-            brain.OnStateChanged += HandleStateChanged;
-        }
-
-        if (locomotion != null)
-        {
-            locomotion.OnLinkTraversalStarted += HandleLinkTraversal;
-        }
-    }
-
-
-    private void OnDisable()
-    {
-        if (brain != null)
-        {
-            brain.OnStateChanged -= HandleStateChanged;
-        }
-
-        if (locomotion != null)
-        {
-            locomotion.OnLinkTraversalStarted -= HandleLinkTraversal;
-        }
-    }
-
-
-    private void Update()
-    {
-        TickFootsteps();
-
-        TickIdleVocals();
-    }
-
-
-    private void EnsureSource()
-    {
         if (source == null)
         {
             source = GetComponent<AudioSource>();
@@ -157,13 +154,62 @@ public class XenoAudio : MonoBehaviour
             source = gameObject.AddComponent<AudioSource>();
         }
 
-        source.playOnAwake = false;
+        GameSound.Configure(source, GameSound.Creature, 1f, maxDistance);
 
-        source.spatialBlend = spatialBlend;
+        lastPosition = transform.position;
 
-        source.maxDistance = maxDistance;
+        nextRoar = Time.time + Random.Range(roarIntervalMin * 0.5f, roarIntervalMax);
+    }
 
-        source.rolloffMode = AudioRolloffMode.Linear;
+
+    private void Start()
+    {
+        growl = GameSound.Loop(gameObject, "CreatureGrowlLoop", GameSound.Creature, 1f, growlDistance);
+
+        if (growl != null)
+        {
+            growl.transform.localPosition = Vector3.up * 1.3f;
+        }
+    }
+
+
+    private void OnEnable()
+    {
+        if (perception != null)
+        {
+            perception.OnLevelChanged += HandleLevelChanged;
+        }
+
+        if (tree != null)
+        {
+            tree.OnAttack += HandleAttack;
+        }
+    }
+
+
+    private void OnDisable()
+    {
+        if (perception != null)
+        {
+            perception.OnLevelChanged -= HandleLevelChanged;
+        }
+
+        if (tree != null)
+        {
+            tree.OnAttack -= HandleAttack;
+        }
+    }
+
+
+    private void Update()
+    {
+        TickFootsteps();
+
+        TickGrowl();
+
+        TickRoar();
+
+        TickSniff();
     }
 
 
@@ -179,112 +225,146 @@ public class XenoAudio : MonoBehaviour
 
         lastPosition = transform.position;
 
-        if (locomotion.IsTraversingLink)
-            return;
-
         if (!locomotion.IsMoving)
             return;
 
+        bool running = locomotion.CurrentSpeed >= runSpeed;
+
         distanceSinceStep += delta.magnitude;
 
-        if (distanceSinceStep < strideLength)
+        float stride = running ? runStride : walkStride;
+
+        if (distanceSinceStep < stride)
             return;
 
-        distanceSinceStep -= strideLength;
+        distanceSinceStep -= stride;
 
-        PlayOneOf(footsteps, footstepVolume);
+        bool standIn = footsteps == null || footsteps.Length == 0;
+
+        AudioClip clip = standIn
+            ? GameSound.Any(GameSound.Set(running ? "Steps/Run" : "Steps/Walk"))
+            : footsteps[Random.Range(0, footsteps.Length)];
+
+        float pitch = (standIn ? standInPitch : 1f) * Random.Range(0.93f, 1.07f);
+
+        /* Quieter when creeping, so a prowl is genuinely hard to hear. */
+
+        float volume = footstepVolume *
+                       Mathf.Lerp(0.45f, 1f, Mathf.InverseLerp(1f, runSpeed, locomotion.CurrentSpeed));
+
+        GameSound.Play(clip, transform.position, volume, GameSound.Creature, pitch, footstepDistance);
     }
 
 
     // =========================================================
-    // VOCALISATIONS
+    // GROWL
     // =========================================================
 
-    private void HandleStateChanged(
-        XenoStateId previous,
-        XenoStateId next)
+    private void TickGrowl()
     {
-        switch (next)
+        if (growl == null)
+            return;
+
+        float target;
+
+        switch (Level)
         {
-            case XenoStateId.Stalk:
-                PlayOneOf(stalkVocals, 1f);
-                break;
+            case AwarenessLevel.Confirmed: target = growlConfirmed; break;
+            case AwarenessLevel.Alerted: target = growlAlerted; break;
+            case AwarenessLevel.Suspicious: target = growlSuspicious; break;
+            default: target = growlUnaware; break;
+        }
 
-            case XenoStateId.Chase:
-                PlayOneOf(chaseVocals, 1f);
-                break;
+        growl.volume = Mathf.MoveTowards(growl.volume, target, Time.deltaTime * 0.6f);
+    }
 
-            case XenoStateId.Attack:
-                PlayOneOf(attackVocals, 1f);
-                break;
+
+    // =========================================================
+    // VOCALS
+    // =========================================================
+
+    private void HandleLevelChanged(AwarenessLevel previous, AwarenessLevel next)
+    {
+        if (next == AwarenessLevel.Confirmed && previous < AwarenessLevel.Confirmed)
+        {
+            if (Time.time - lastScream > screamCooldown)
+            {
+                lastScream = Time.time;
+
+                Vocal("CreatureScream", 1f, 55f);
+            }
+
+            return;
+        }
+
+        if (next == AwarenessLevel.Suspicious && previous == AwarenessLevel.Unaware)
+        {
+            Sniff();
         }
     }
 
 
-    private void TickIdleVocals()
+    private void HandleAttack(Vector3 position, float reach)
     {
-        if (Time.time < nextIdleVocalTime)
+        Vocal("CreatureShriek", 1f, maxDistance);
+    }
+
+
+    /// <summary>
+    /// A distant roar while it has no idea where you are - a reminder
+    /// that it exists, and roughly where, without telling you anything
+    /// about its intent.
+    /// </summary>
+    private void TickRoar()
+    {
+        if (Time.time < nextRoar)
             return;
 
-        ScheduleIdleVocal();
+        nextRoar = Time.time + Random.Range(roarIntervalMin, roarIntervalMax);
 
-        /*
-         * Only while it has no idea. An idle rumble during a chase
-         * would undercut the chase vocal.
-         */
-
-        if (brain != null &&
-            brain.CurrentState != XenoStateId.Patrol)
+        if (Level == AwarenessLevel.Unaware)
         {
-            return;
+            Vocal("CreatureRoar", 0.85f, 60f);
         }
-
-        PlayOneOf(idleVocals, 0.8f);
     }
 
 
-    private void ScheduleIdleVocal()
+    /// <summary>Sniffs whenever it stops to search.</summary>
+    private void TickSniff()
     {
-        nextIdleVocalTime =
-            Time.time +
-            Random.Range(
-                idleVocalIntervalMin,
-                Mathf.Max(idleVocalIntervalMin, idleVocalIntervalMax)
-            );
-    }
+        bool searching =
+            (Level == AwarenessLevel.Suspicious || Level == AwarenessLevel.Alerted) &&
+            !locomotion.IsMoving;
 
-
-    // =========================================================
-    // VENTS
-    // =========================================================
-
-    private void HandleLinkTraversal(
-        Vector3 from,
-        Vector3 to)
-    {
-        PlayOneOf(ventClanks, ventVolume);
-    }
-
-
-    // =========================================================
-    // PLAYBACK
-    // =========================================================
-
-    private void PlayOneOf(
-        AudioClip[] clips,
-        float volume)
-    {
-        if (source == null || clips == null || clips.Length == 0)
+        if (!searching || Time.time < nextSniff)
             return;
 
-        AudioClip clip = clips[Random.Range(0, clips.Length)];
+        Sniff();
+    }
+
+
+    private void Sniff()
+    {
+        nextSniff = Time.time + Random.Range(sniffIntervalMin, sniffIntervalMax);
+
+        Vocal(Random.value < 0.5f ? "CreatureSniff_1" : "CreatureSniff_2", 0.8f, 20f);
+    }
+
+
+    private void Vocal(string name, float volume, float distance)
+    {
+        AudioClip clip = GameSound.Get(name);
 
         if (clip == null)
             return;
 
+        source.maxDistance = distance;
+
+        source.pitch = Random.Range(0.95f, 1.05f);
+
         /*
          * PlayOneShot rather than Play, so a footfall does not cut off
-         * a hiss that is still ringing.
+         * a scream that is still ringing.
          */
 
         source.PlayOneShot(clip, volume);

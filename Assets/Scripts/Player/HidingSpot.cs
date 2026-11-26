@@ -45,16 +45,33 @@ public class HidingSpot : MonoBehaviour
     private float interactRadius = 1.8f;
 
 
+    [Header("Pose")]
+    /// <summary>
+    /// Eye height above the floor while hidden. Under a desk the player
+    /// is crouched with their head just below the tabletop. Below zero
+    /// keeps the player's own eye height.
+    /// </summary>
+    [SerializeField]
+    private float eyeHeight = -1f;
+
+    /// <summary>How far the player may turn either side of the hide point's facing.</summary>
+    [SerializeField, Range(0f, 180f)]
+    private float lookYawRange = 180f;
+
+    [SerializeField, Range(-89f, 0f)]
+    private float lookPitchUp = -85f;
+
+    [SerializeField, Range(0f, 89f)]
+    private float lookPitchDown = 85f;
+
+    /// <summary>Seconds to duck in or climb out.</summary>
+    [SerializeField, Min(0.05f)]
+    private float transitionTime = 0.45f;
+
+
     [Header("Concealment")]
     [SerializeField, Range(0f, 1f)]
     private float visibilityWhileHidden = 0.05f;
-
-    /// <summary>
-    /// Leaning out to look is the whole risk-reward of hiding. It has
-    /// to be genuinely dangerous or nobody will ever stay still.
-    /// </summary>
-    [SerializeField, Range(0f, 1f)]
-    private float visibilityWhilePeeking = 0.55f;
 
     [SerializeField, Range(0f, 1f)]
     private float noiseWhileHidden = 0.3f;
@@ -85,7 +102,54 @@ public class HidingSpot : MonoBehaviour
 
     public float VisibilityWhileHidden => visibilityWhileHidden;
 
-    public float VisibilityWhilePeeking => visibilityWhilePeeking;
+    public float EyeHeight => eyeHeight;
+
+    public float LookYawRange => lookYawRange;
+
+    public float LookPitchUp => lookPitchUp;
+
+    public float LookPitchDown => lookPitchDown;
+
+    public float TransitionTime => transitionTime;
+
+
+    // =========================================================
+    // DESK
+    // =========================================================
+
+    /*
+     * The desk pose, tuned in the hiding test scene: crouched with the
+     * eyes just under the tabletop, tucked against the far legs so the
+     * top's edge crosses the top of the view and the leg frames stand
+     * at either side, looking out of one long side.
+     */
+
+    public const float DeskEyeHeight = 0.48f;
+
+    /// <summary>How far back from the desk's centre the player crouches.</summary>
+    public const float DeskTuckBack = 0.36f;
+
+
+    /// <summary>Applies the tuned under-the-desk pose.</summary>
+    public void ConfigureDesk(float reach = 1.6f)
+    {
+        ConfigurePose(null, DeskEyeHeight, 60f, -8f, 25f, 0.45f, reach);
+    }
+
+
+    /// <summary>Sets the hidden pose - used by the scene builders.</summary>
+    public void ConfigurePose(
+        Transform point, float eye, float yawRange,
+        float pitchUp, float pitchDown, float transition, float radius)
+    {
+        hidePoint = point;
+        eyeHeight = eye;
+        lookYawRange = yawRange;
+        lookPitchUp = pitchUp;
+        lookPitchDown = pitchDown;
+        transitionTime = transition;
+        interactRadius = radius;
+    }
 
     public float NoiseWhileHidden => noiseWhileHidden;
 

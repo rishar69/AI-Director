@@ -97,6 +97,11 @@ public class BTBranch : BTNode
 
     public BTNode Child => child;
 
+    private BTNode[] traceChildren;
+
+    public override System.Collections.Generic.IReadOnlyList<BTNode> TraceChildren =>
+        traceChildren ??= (child != null ? new[] { child } : new BTNode[0]);
+
 
     protected override BTStatus OnTick(BTContext context)
     {
